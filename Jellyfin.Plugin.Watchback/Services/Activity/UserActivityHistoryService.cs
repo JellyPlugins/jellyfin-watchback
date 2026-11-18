@@ -40,11 +40,8 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
     private readonly Dictionary<Guid, DateTimeOffset> _historyRetryAt = [];
     private readonly Dictionary<Guid, UserActivityCoverage> _coverage = [];
     private readonly HashSet<Guid> _dirty = [];
-    private readonly HashSet<Guid> _reportingUsers = [];
     private readonly Lock _gate = new();
     private DateTimeOffset _nextReportingRefresh;
-    private bool _reportingReady;
-    private bool _reportingCurrent;
     private bool _initialized;
     private DateTimeOffset _lastTick;
     private DateTimeOffset _lastFlush;
@@ -67,7 +64,6 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         PlaybackReportingReader? reporting = null)
     {
         _reporting = reporting;
-        _reportingReady = reporting is null;
         _configuration = configuration;
         _sessions = sessions;
         _users = users;
@@ -154,7 +150,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
             }
         }
 
-        RefreshReporting(availableUsers, now, needsCurrent);
+        RefreshReporting(availableUsers, now);
         var refreshed = false;
         if (allowRefresh && (!_initialized || now >= _nextRefresh || needsCurrent) && now >= _retryRefresh)
         {
@@ -172,10 +168,10 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
             {
                 if (availableUsers.Length == 0)
                 {
-                    consumer.Tick(now, availableUsers, History, refreshed, _reportingReady);
+                    consumer.Tick(now, availableUsers, History, refreshed, true);
                 }
 
-                foreach (var group in availableUsers.GroupBy(user => _reporting is null || (_reportingReady && _reportingUsers.Contains(user.Id))))
+                foreach (var group in availableUsers.GroupBy(user => _reporting is null || History(user.Id).PlaybackReportingImportCompleted))
                 {
                     consumer.Tick(now, group.ToArray(), History, refreshed, group.Key);
                 }
@@ -192,25 +188,17 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         }
     }
 
-    private void RefreshReporting(User[] users, DateTimeOffset now, bool needsCurrent)
+    private void RefreshReporting(User[] users, DateTimeOffset now)
     {
-        if (!needsCurrent)
-        {
-            _reportingCurrent = false;
-        }
-
-        if (_reporting is null || (now < _nextReportingRefresh
-            && (!needsCurrent || (_reportingCurrent && users.All(user => _reportingUsers.Contains(user.Id))))))
+        var pending = users.Where(user => !History(user.Id).PlaybackReportingImportCompleted).ToArray();
+        if (_reporting is null || pending.Length == 0 || now < _nextReportingRefresh)
         {
             return;
         }
 
-        _reportingCurrent = needsCurrent;
-        _reportingUsers.Clear();
-        _reportingUsers.UnionWith(users.Select(user => user.Id));
         try
         {
-            var available = users.ToDictionary(user => user.Id);
+            var available = pending.ToDictionary(user => user.Id);
             var imported = 0;
             foreach (var entry in _reporting.Read(now))
             {
@@ -256,14 +244,32 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 _logger.LogInformation("Imported or updated {Count} historical Playback Reporting entries.", imported);
             }
 
-            _reportingReady = true;
-            _nextReportingRefresh = now.AddHours(1);
+            foreach (var user in pending)
+            {
+                var history = History(user.Id);
+                history.PlaybackReportingImportCompleted = true;
+                try
+                {
+                    // Persist the completion marker and imported rows atomically before
+                    // allowing publication or skipping the source on subsequent starts.
+                    _store.Save(user.Id, history);
+                    _dirty.Remove(user.Id);
+                }
+                catch
+                {
+                    history.PlaybackReportingImportCompleted = false;
+                    _coverage.Remove(user.Id);
+                    _dirty.Add(user.Id);
+                    throw;
+                }
+            }
+
+            _nextReportingRefresh = default;
         }
         catch (Exception ex) when (!ex.IsFatal())
         {
             // Collection continues, but do not freeze a new annual report while its import is
             // incomplete. Previously published reports remain available and unchanged.
-            _reportingReady = false;
             _nextReportingRefresh = now.AddMinutes(1);
             _logger.LogWarning(ex, "Could not import Playback Reporting history; retrying before publishing new annual reports.");
         }
@@ -370,10 +376,10 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 var users = _users.GetUsers().Where(user => !user.HasPermission(PermissionKind.IsDisabled) && TryHistory(user.Id, now, out _)).ToArray();
                 if (users.Length == 0)
                 {
-                    consumer.Tick(now, users, History, true, _reportingReady);
+                    consumer.Tick(now, users, History, true, true);
                 }
 
-                foreach (var group in users.GroupBy(user => _reporting is null || (_reportingReady && _reportingUsers.Contains(user.Id))))
+                foreach (var group in users.GroupBy(user => _reporting is null || History(user.Id).PlaybackReportingImportCompleted))
                 {
                     consumer.Tick(now, group.ToArray(), History, true, group.Key);
                 }

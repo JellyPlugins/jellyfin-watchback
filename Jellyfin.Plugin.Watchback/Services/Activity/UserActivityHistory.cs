@@ -28,12 +28,14 @@ internal sealed class UserActivityHistory
     // on restart, even if the Playback Reporting plugin is installed later.
     public DateTimeOffset? PlaybackReportingBeforeUtc { get; set; }
 
+    public bool PlaybackReportingImportCompleted { get; set; }
+
     public Collection<ImportedPlayback> ImportedPlayback { get; init; } = [];
 
     internal bool Import(PlaybackReportingReader.Entry entry, UserPlaybackItem item, DateTimeOffset now)
     {
         var boundary = PlaybackReportingBeforeUtc ?? Coverage.Select(period => (DateTimeOffset?)period.StartUtc).Min() ?? now;
-        if (entry.StartedAtUtc >= boundary)
+        if (PlaybackReportingImportCompleted || entry.StartedAtUtc >= boundary)
         {
             return false;
         }

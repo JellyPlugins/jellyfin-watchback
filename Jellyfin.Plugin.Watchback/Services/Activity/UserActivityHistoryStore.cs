@@ -98,6 +98,7 @@ internal sealed class UserActivityHistoryStore
     private static void ResolveAndValidate(UserActivityHistory history)
     {
         if (history.SchemaVersion != 2 || history.Metadata is null || history.Sessions is null || history.Coverage is null || history.Observations is null || history.ImportedPlayback is null
+            || (history.PlaybackReportingImportCompleted && !history.PlaybackReportingBeforeUtc.HasValue)
             || (history.PlaybackReportingBeforeUtc.HasValue && history.PlaybackReportingBeforeUtc.Value.Offset != TimeSpan.Zero)
             || history.Metadata.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Value is null || pair.Value.ItemId == Guid.Empty
                 || pair.Value.Name is null || string.IsNullOrWhiteSpace(pair.Value.ItemType) || pair.Value.Genres is null || pair.Value.RuntimeTicks < 0)

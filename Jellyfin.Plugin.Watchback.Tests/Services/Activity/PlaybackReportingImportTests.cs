@@ -290,8 +290,10 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!.AsObject();
         json.Remove("importedPlayback");
         json.Remove("playbackReportingBeforeUtc");
+        json.Remove("playbackReportingImportCompleted");
         File.WriteAllText(path, json.ToJsonString());
         Assert.Empty(store.Load(_userId).ImportedPlayback);
+        Assert.False(store.Load(_userId).PlaybackReportingImportCompleted);
         history.PlaybackReportingBeforeUtc = _cutoff;
         var entry = new PlaybackReportingReader.Entry("source", _userId, _itemId, "Movie", "Movie", _cutoff.AddDays(-1), 600);
         history.Import(entry, Item(), _cutoff);
@@ -364,6 +366,7 @@ public sealed class PlaybackReportingImportTests : IDisposable
         service.Tick(_localCutoff, allowRefresh: true);
         var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
         Assert.Single(store.Load(_userId).ImportedPlayback);
+        Assert.True(store.Load(_userId).PlaybackReportingImportCompleted);
         if (!initiallyEnabled) Assert.Null(consumer.Load(_userId));
         config.YearlyRewindEnabled = true;
         service.Tick(_localCutoff.AddMinutes(1), allowRefresh: true);
@@ -371,9 +374,10 @@ public sealed class PlaybackReportingImportTests : IDisposable
         Assert.Equal(1, report.PlaybackReportingPlayCount);
         Insert(db, "2026-12-07 00:00:00Z");
         service.Tick(_localCutoff.AddHours(2), allowRefresh: true);
-        Assert.Equal(2, store.Load(_userId).ImportedPlayback.Count);
+        Assert.Single(store.Load(_userId).ImportedPlayback);
         Assert.Equal(report.SnapshotId, consumer.Load(_userId)!.SnapshotId);
         Assert.Equal(1, consumer.Load(_userId)!.PlaybackReportingPlayCount);
+        _plugins.VerifyGet(plugins => plugins.Plugins, Times.Once);
     }
 
     [Fact]
@@ -506,6 +510,7 @@ public sealed class PlaybackReportingImportTests : IDisposable
         Assert.Equal(1, consumer.Load(_userId)!.PlaybackReportingPlayCount);
         var loaded = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback")).Load(_userId);
         Assert.Equal(_itemId, Assert.Single(loaded.ImportedPlayback).Item.ItemId);
+        Assert.True(loaded.PlaybackReportingImportCompleted);
         Assert.NotEmpty(loaded.Coverage);
     }
 
@@ -533,7 +538,7 @@ public sealed class PlaybackReportingImportTests : IDisposable
         insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
         service.Tick(_localCutoff.AddMinutes(1));
         Assert.Equal(1, consumer.Load(_userId)!.PlaybackReportingPlayCount);
-        _plugins.VerifyGet(plugins => plugins.Plugins, Times.Exactly(2));
+        _plugins.VerifyGet(plugins => plugins.Plugins, Times.Once);
     }
 
     [Theory]
@@ -579,6 +584,182 @@ public sealed class PlaybackReportingImportTests : IDisposable
         ((IUserActivityHistoryConsumer)consumer).Tick(now, [user], _ => history, false, true);
         Assert.Contains(consumer.Load(_userId)!.Items, item => item.ItemId == _itemId);
         Assert.Equal("Partial", consumer.Load(_userId)!.DataState);
+    }
+
+    [Theory]
+    [InlineData("present")]
+    [InlineData("empty")]
+    [InlineData("missing-plugin")]
+    [InlineData("missing-database")]
+    public void CompletedInitialImportSurvivesRestartAndOwnRecordingContinues(string source)
+    {
+        if (source != "missing-database")
+        {
+            using var db = Database();
+            if (source == "present") Insert(db);
+        }
+
+        if (source == "missing-plugin") _plugins.SetupGet(value => value.Plugins).Returns([]);
+        var configuration = new Mock<IPluginConfigurationService>();
+        configuration.SetupGet(value => value.IsInitialized).Returns(true);
+        configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration { YearlyRewindEnabled = true });
+        var user = new User("test", "default", "default") { Id = _userId };
+        var users = new Mock<IUserManager>();
+        users.Setup(value => value.GetUsers()).Returns([user]);
+        users.Setup(value => value.GetUserById(_userId)).Returns(user);
+        var insights = new Mock<IUserActivityInsightsService>();
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
+        var clock = new TestClock { Now = _localCutoff };
+        var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
+        using (var first = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
+            new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
+            _paths.Object, clock, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader()))
+        {
+            first.Tick(clock.Now);
+        }
+
+        var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
+        var initial = store.Load(_userId);
+        Assert.True(initial.PlaybackReportingImportCompleted);
+        Assert.Equal(source == "present" ? 1 : 0, initial.ImportedPlayback.Count);
+        using (var db = Database())
+        {
+            using var update = db.CreateCommand();
+            update.CommandText = "UPDATE PlaybackActivity SET PlayDuration=1200";
+            update.ExecuteNonQuery();
+            Insert(db, "2026-12-07 00:00:00Z");
+        }
+
+        _plugins.SetupGet(value => value.Plugins).Throws(new IOException("Source must no longer be accessed"));
+        clock.Now = _localCutoff.AddHours(2);
+        var restartedConsumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
+        using var restarted = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
+            new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
+            _paths.Object, clock, [restartedConsumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
+        restarted.Tick(clock.Now);
+        restarted.Record(new UserActivityResult
+        {
+            GeneratedAt = clock.Now.UtcDateTime,
+            Items = [new() { ItemId = _itemId, ItemName = "Own playback", ItemType = "Movie",
+                UserActivities = [new() { UserId = _userId, Played = true, PlayCount = 1, LastPlayedDate = _localCutoff.AddHours(1).UtcDateTime }] }]
+        });
+        restarted.Tick(_localCutoff.AddYears(1));
+        var loaded = store.Load(_userId);
+        Assert.True(loaded.PlaybackReportingImportCompleted);
+        Assert.Equal(initial.PlaybackReportingBeforeUtc, loaded.PlaybackReportingBeforeUtc);
+        Assert.Equal(initial.ImportedPlayback.Count, loaded.ImportedPlayback.Count);
+        if (source == "present") Assert.Equal(600, Assert.Single(loaded.ImportedPlayback).ActiveSeconds);
+        Assert.Single(loaded.Observations);
+        Assert.Equal(_localCutoff.AddYears(1), restartedConsumer.Load(_userId)!.SnapshotAtUtc);
+        _plugins.VerifyGet(value => value.Plugins, Times.Once);
+    }
+
+    [Fact]
+    public void ExistingJournalWithoutCompletionMarkerImportsOnceUsingItsOriginalBoundary()
+    {
+        using var db = Database();
+        var boundary = _localCutoff.AddMonths(-1);
+        Insert(db, boundary.AddDays(-2).ToString("O", CultureInfo.InvariantCulture));
+        var entry = Assert.Single(Reader().Read(_localCutoff));
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = boundary };
+        history.Import(entry, Item(), _localCutoff.AddDays(-1));
+        var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
+        store.Save(_userId, history);
+        var path = Path.Join(_directory, "jellyfin-watchback", "activity-history", _userId.ToString("N") + ".json");
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        json.Remove("playbackReportingImportCompleted");
+        File.WriteAllText(path, json.ToJsonString());
+        Insert(db, boundary.AddDays(-3).ToString("O", CultureInfo.InvariantCulture));
+        Insert(db, boundary.AddDays(1).ToString("O", CultureInfo.InvariantCulture));
+        var configuration = new Mock<IPluginConfigurationService>();
+        configuration.SetupGet(value => value.IsInitialized).Returns(true);
+        configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration());
+        var user = new User("test", "default", "default") { Id = _userId };
+        var users = new Mock<IUserManager>();
+        users.Setup(value => value.GetUsers()).Returns([user]);
+        var insights = new Mock<IUserActivityInsightsService>();
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
+        using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
+            new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
+            _paths.Object, new TestClock { Now = _localCutoff }, [], NullLogger<UserActivityHistoryService>.Instance, Reader());
+        service.Tick(_localCutoff);
+        service.Tick(_localCutoff.AddHours(2));
+        var loaded = store.Load(_userId);
+        Assert.True(loaded.PlaybackReportingImportCompleted);
+        Assert.Equal(boundary, loaded.PlaybackReportingBeforeUtc);
+        Assert.Equal(2, loaded.ImportedPlayback.Count);
+        Assert.Equal(1, loaded.ImportedPlayback.Count(row => row.SourceKey == entry.SourceKey));
+        Assert.All(loaded.ImportedPlayback, row => Assert.True(row.StartedAtUtc < boundary));
+        _plugins.VerifyGet(value => value.Plugins, Times.Exactly(2)); // One fixture read and one initial collector import.
+    }
+
+    [Fact]
+    public void FailedJournalSaveKeepsTheInitialImportPendingUntilItCanBePersisted()
+    {
+        using var db = Database();
+        Insert(db);
+        var configuration = new Mock<IPluginConfigurationService>();
+        configuration.SetupGet(value => value.IsInitialized).Returns(true);
+        configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration { YearlyRewindEnabled = true });
+        var user = new User("test", "default", "default") { Id = _userId };
+        var users = new Mock<IUserManager>();
+        users.Setup(value => value.GetUsers()).Returns([user]);
+        var insights = new Mock<IUserActivityInsightsService>();
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
+        var journal = Path.Join(_directory, "jellyfin-watchback", "activity-history", _userId.ToString("N") + ".json");
+        var blockWrites = true;
+        var library = new Mock<ILibraryManager>();
+        library.Setup(value => value.GetItemById(_itemId)).Callback(() => { if (blockWrites) Directory.CreateDirectory(journal); });
+        var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
+        using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, library.Object,
+            new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
+            _paths.Object, new TestClock { Now = _localCutoff }, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
+        service.Tick(_localCutoff);
+        Assert.Null(consumer.Load(_userId));
+        Assert.False(File.Exists(journal));
+        blockWrites = false;
+        Directory.Delete(journal);
+        service.Tick(_localCutoff.AddSeconds(30));
+        _plugins.VerifyGet(value => value.Plugins, Times.Once);
+        var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
+        Assert.False(store.Load(_userId).PlaybackReportingImportCompleted);
+        service.Tick(_localCutoff.AddMinutes(1));
+        Assert.True(store.Load(_userId).PlaybackReportingImportCompleted);
+        Assert.Single(store.Load(_userId).ImportedPlayback);
+        Assert.Equal(1, consumer.Load(_userId)!.PlaybackReportingPlayCount);
+        _plugins.VerifyGet(value => value.Plugins, Times.Exactly(2));
+    }
+
+    [Fact]
+    public void AFailedInitialImportForANewUserDoesNotBlockCompletedUsersNextAnnualReport()
+    {
+        using var db = Database();
+        Insert(db);
+        var configuration = new Mock<IPluginConfigurationService>();
+        configuration.SetupGet(value => value.IsInitialized).Returns(true);
+        configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration { YearlyRewindEnabled = true });
+        var user = new User("completed", "default", "default") { Id = _userId };
+        var newcomer = new User("new", "default", "default") { Id = Guid.NewGuid() };
+        var allUsers = new[] { user };
+        var users = new Mock<IUserManager>();
+        users.Setup(value => value.GetUsers()).Returns(() => allUsers);
+        var insights = new Mock<IUserActivityInsightsService>();
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
+        var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
+        using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
+            new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
+            _paths.Object, new TestClock { Now = _localCutoff }, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
+        service.Tick(_localCutoff);
+        using var drop = db.CreateCommand();
+        drop.CommandText = "DROP TABLE PlaybackActivity";
+        drop.ExecuteNonQuery();
+        allUsers = [user, newcomer];
+        service.Tick(_localCutoff.AddYears(1));
+        Assert.Equal(_localCutoff.AddYears(1), consumer.Load(_userId)!.SnapshotAtUtc);
+        Assert.Null(consumer.Load(newcomer.Id));
+        var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
+        Assert.True(store.Load(_userId).PlaybackReportingImportCompleted);
+        Assert.False(store.Load(newcomer.Id).PlaybackReportingImportCompleted);
     }
 
     private sealed class TestClock : TimeProvider

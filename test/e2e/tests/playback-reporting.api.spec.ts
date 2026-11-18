@@ -14,6 +14,7 @@ test('imports retained Playback Reporting history once and keeps the published r
   const original=await(await admin.get(p('Configuration'))).json();
   let userId='';
   let user:Awaited<ReturnType<typeof request.newContext>>|undefined;
+  let seed:DatabaseSync|undefined;
   const source=join(dirname(rewindDataDir()),'playback_reporting.db');
   const digest=()=>createHash('sha256').update(readFileSync(source)).digest('hex');
   const window=visibleRewindWindow();
@@ -21,6 +22,11 @@ test('imports retained Playback Reporting history once and keeps the published r
     const plugins=await(await admin.get('/Plugins')).json();
     expect(plugins.some((plugin:any)=>field(plugin,'Id').replaceAll('-','')==='5c53438191a343cb907a35aa02eb9d2c')).toBe(true);
     expect((await admin.put(p('Configuration'),{data:{...original,YearlyRewindEnabled:false}})).ok()).toBe(true);
+    // Hold the optional source until the new user's historical row is seeded.
+    // Otherwise the one-time check could finish between user creation and insertion.
+    seed=new DatabaseSync(source);
+    seed.exec('CREATE TABLE IF NOT EXISTS PlaybackActivity (DateCreated DATETIME NOT NULL, UserId TEXT, ItemId TEXT, ItemType TEXT, ItemName TEXT, PlaybackMethod TEXT, ClientName TEXT, DeviceName TEXT, PlayDuration INT)');
+    seed.exec('BEGIN EXCLUSIVE');
     const name='reporting-'+randomUUID().slice(0,8);
     const created=await admin.post('/Users/New',{data:{Name:name}});
     expect(created.ok()).toBe(true);
@@ -33,16 +39,17 @@ test('imports retained Playback Reporting history once and keeps the published r
     const item=items.Items[0];expect(item).toBeTruthy();
     const played=new Date();played.setUTCDate(played.getUTCDate()-10);
     function insert(date:Date) {
-      const db=new DatabaseSync(source);
+      const db=seed??new DatabaseSync(source);
       try {
         db.exec('CREATE TABLE IF NOT EXISTS PlaybackActivity (DateCreated DATETIME NOT NULL, UserId TEXT, ItemId TEXT, ItemType TEXT, ItemName TEXT, PlaybackMethod TEXT, ClientName TEXT, DeviceName TEXT, PlayDuration INT)');
         db.prepare('INSERT INTO PlaybackActivity VALUES (?,?,?,?,?,?,?,?,?)').run(date.toISOString(),userId.replaceAll('-',''),item.Id,'Movie','Historical playback fixture','DirectPlay','Historical client','Historical device',600);
-      } finally {db.close();}
+      } finally {if(db!==seed)db.close();}
     }
     insert(played);
+    seed.exec('COMMIT');seed.close();seed=undefined;
     const before=digest();
     expect((await admin.put(p('Configuration'),{data:{...original,YearlyRewindEnabled:true,...window}})).ok()).toBe(true);
-    await expect.poll(async()=>field(await(await user!.get(p('YearlyRewind/My'))).json(),'PlaybackReportingPlayCount')).toBe(1);
+    await expect.poll(async()=>field(await(await user!.get(p('YearlyRewind/My'))).json(),'PlaybackReportingPlayCount'),{timeout:90000}).toBe(1);
     const report=await(await user.get(p('YearlyRewind/My'))).json();
     expect(field(report,'UserId').replaceAll('-','')).toBe(userId.replaceAll('-',''));
     const imported=field(report,'Items').find((row:any)=>field(row,'PlaybackReportingPlayCount')===1);
@@ -53,29 +60,31 @@ test('imports retained Playback Reporting history once and keeps the published r
     const historyFile=join(rewindDataDir(),'activity-history',userId.replaceAll('-','')+'.json');
     const history=()=>JSON.parse(readFileSync(historyFile,'utf8'));
     await expect.poll(()=>existsSync(historyFile)?history().importedPlayback.length:0).toBe(1);
-    expect((await admin.put(p('Configuration'),{data:{...original,YearlyRewindEnabled:false}})).ok()).toBe(true);
-    const disabledAt=Date.now();
-    const coverageEnd=()=>Math.max(...history().coverage.map((period:any)=>Date.parse(period.endUtc)));
-    await expect.poll(coverageEnd,{timeout:45000}).toBeGreaterThan(disabledAt);
-    const firstDisabledFlush=coverageEnd();
-    // A later collector flush proves that the preceding disabled tick completed,
-    // including its consumer notification, before enabling the same cutoff again.
-    await expect.poll(coverageEnd,{timeout:45000}).toBeGreaterThan(firstDisabledFlush);
+    expect(history().playbackReportingImportCompleted).toBe(true);
     insert(new Date(played.getTime()-86400000));
-    expect((await admin.put(p('Configuration'),{data:{...original,YearlyRewindEnabled:true,...window}})).ok()).toBe(true);
-    await expect.poll(()=>history().importedPlayback.length).toBe(2);
-    expect(new Set(history().importedPlayback.map((row:any)=>row.sourceKey)).size).toBe(2);
+    const afterInsert=Date.now();
+    const changedSource=digest();
+    // Observe continued collection before asserting that the new source row was ignored.
+    const coverageEnd=()=>Math.max(...history().coverage.map((period:any)=>Date.parse(period.endUtc)));
+    await expect.poll(coverageEnd,{timeout:45000}).toBeGreaterThan(afterInsert);
+    expect(history().playbackReportingImportCompleted).toBe(true);
+    expect(history().importedPlayback).toHaveLength(1);
+    expect(digest()).toBe(changedSource);
     const frozen=JSON.parse(readFileSync(rewindPath(userId),'utf8'));
     expect(frozen.snapshotId.replaceAll('-','')).toBe(snapshot.replaceAll('-',''));
     expect(field(frozen,'PlaybackReportingPlayCount')).toBe(1);
   } finally {
     try {
-      expect((await admin.put(p('Configuration'),{data:original})).ok()).toBe(true);
+      if(seed){try{seed.exec('ROLLBACK');}finally{seed.close();}}
     } finally {
       try {
-        if(userId)expect((await admin.delete('/Users/'+userId)).ok()).toBe(true);
+        expect((await admin.put(p('Configuration'),{data:original})).ok()).toBe(true);
       } finally {
-        try {await user?.dispose();} finally {await admin.dispose();}
+        try {
+          if(userId)expect((await admin.delete('/Users/'+userId)).ok()).toBe(true);
+        } finally {
+          try {await user?.dispose();} finally {await admin.dispose();}
+        }
       }
     }
   }
