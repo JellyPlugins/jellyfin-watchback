@@ -266,7 +266,12 @@
         heading.append(' ', node('span', '(' + date(start) + ' – ' + date(new Date(new Date(cutoff).getTime() - 1).toISOString()) + ')', 'jfw-rewind-period'));
         panel.append(heading);
         var state = value(report, 'DataState');
-        if (reconstructedCount()) panel.append(node('p', text('reconstructed').replace('{count}', number(reconstructedCount())), 'jfw-rewind-notice'));
+        var jellyfinCount = value(report, 'JellyfinReconstructedItemCount');
+        if (jellyfinCount === undefined || jellyfinCount === null) jellyfinCount = (value(report, 'Items') || []).filter(function (item) {
+            var reconstructed = value(item, 'HasJellyfinReconstructedActivity');
+            return reconstructed === undefined || reconstructed === null ? value(item, 'HasReconstructedActivity') && !(value(item, 'PlaybackReportingPlayCount') > 0) : reconstructed;
+        }).length;
+        if (jellyfinCount) panel.append(node('p', text('reconstructed').replace('{count}', number(jellyfinCount)), 'jfw-rewind-notice'));
         if (value(report, 'PlaybackReportingPlayCount') > 0) panel.append(node('p', text('playbackReporting').replace('{count}', number(value(report, 'PlaybackReportingPlayCount'))), 'jfw-rewind-secondary'));
         if ((state === 'Partial' && !reconstructedCount()) || state === 'NotCollected') panel.append(node('p', text(state === 'Partial' ? 'partial' : 'notCollected'), 'jfw-rewind-notice'));
         if (state === 'NotCollected') return;
