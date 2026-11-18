@@ -31,7 +31,13 @@ var MOCK_YEARLY_REWIND=(function(){
             ActiveSeconds:65*3600,EstimatedSeconds:0,ReconstructedItemCount:0,MovieCount:14,EpisodeCount:48,SeriesCount:3,ActiveDays:72,Genres:['Drama','Comedy','Adventure'],TopGenre:'Drama'}};
 })();
 
-var demoLanguage = new URLSearchParams(location.search).get('lang') || 'de';
+var demoLanguage = (function () {
+  var supported = ['en', 'de', 'fr', 'es', 'pt', 'zh', 'tr', 'sv'];
+  var requested = new URLSearchParams(location.search).get('lang');
+  var candidates = requested ? [requested] : (navigator.languages?.length ? navigator.languages : [navigator.language]);
+  return candidates.map(function (language) { return (language || '').toLowerCase().split(/[-_]/)[0]; })
+    .find(function (language) { return supported.includes(language); }) || 'en';
+})();
 document.documentElement.lang = demoLanguage;
 window.ApiClient = {
   getCurrentUserId: function () { return 'demo-user'; },
