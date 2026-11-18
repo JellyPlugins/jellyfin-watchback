@@ -97,7 +97,8 @@ internal sealed class UserActivityHistoryStore
 
     private static void ResolveAndValidate(UserActivityHistory history)
     {
-        if (history.SchemaVersion != 2 || history.Metadata is null || history.Sessions is null || history.Coverage is null || history.Observations is null
+        if (history.SchemaVersion != 2 || history.Metadata is null || history.Sessions is null || history.Coverage is null || history.Observations is null || history.ImportedPlayback is null
+            || (history.PlaybackReportingBeforeUtc.HasValue && history.PlaybackReportingBeforeUtc.Value.Offset != TimeSpan.Zero)
             || history.Metadata.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Value is null || pair.Value.ItemId == Guid.Empty
                 || pair.Value.Name is null || string.IsNullOrWhiteSpace(pair.Value.ItemType) || pair.Value.Genres is null || pair.Value.RuntimeTicks < 0)
             || history.Coverage.Any(period => period is null || period.StartUtc.Offset != TimeSpan.Zero || period.EndUtc.Offset != TimeSpan.Zero || period.EndUtc < period.StartUtc))
@@ -107,6 +108,23 @@ internal sealed class UserActivityHistoryStore
 
         ResolveSessions(history);
         ResolveObservations(history);
+        foreach (var row in history.ImportedPlayback)
+        {
+            if (row is null || string.IsNullOrWhiteSpace(row.SourceKey) || row.MetadataKey is null || !history.Metadata.TryGetValue(row.MetadataKey, out var item)
+                || row.StartedAtUtc.Offset != TimeSpan.Zero || row.ImportedAtUtc.Offset != TimeSpan.Zero || row.StartedAtUtc >= row.ImportedAtUtc
+                || item.ItemType is not ("Movie" or "Episode") || !double.IsFinite(row.ActiveSeconds) || row.ActiveSeconds <= 0
+                || (history.PlaybackReportingBeforeUtc.HasValue && row.StartedAtUtc >= history.PlaybackReportingBeforeUtc))
+            {
+                throw new InvalidDataException("Invalid imported Playback Reporting entry.");
+            }
+
+            row.Item = item;
+        }
+
+        if (history.ImportedPlayback.Select(row => row.SourceKey).Distinct(StringComparer.Ordinal).Count() != history.ImportedPlayback.Count)
+        {
+            throw new InvalidDataException("Duplicate imported Playback Reporting entries.");
+        }
     }
 
     private static void ResolveSessions(UserActivityHistory history)

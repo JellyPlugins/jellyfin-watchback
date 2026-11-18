@@ -75,5 +75,6 @@
   "rewind.hourUnitLong": "hours",
   "rewind.hourUnit": "h",
   "savingSettings": "Saving settings…",
-  "settingsError": "Failed to save settings."
+  "settingsError": "Failed to save settings.",
+  "rewind.playbackReporting": "Historical plays imported from Playback Reporting: {count}."
 }

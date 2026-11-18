@@ -57,6 +57,8 @@ dotnet build -p:SyncDocs=true
 python3 -m http.server 8080 --directory docs
 ```
 
+The real-server suite also stages disabled Playback Reporting installation metadata and seeds its SQLite schema to verify historical imports without a second active collector.
+
 The demo loads the production CSS, translations and browser scripts with an in-memory API adapter. Demo tests route a local HTTPS origin to these files; no external Jellyfin server is needed.
 
 ## Review and release
@@ -93,6 +95,8 @@ The documentation drift guard checks that each production and test source file i
 - `Services/Activity/IUserActivityHistoryConsumer.cs`
 - `Services/Activity/IUserActivityHistoryRecorder.cs`
 - `Services/Activity/IUserActivityInsightsService.cs`
+- `Services/Activity/ImportedPlayback.cs`
+- `Services/Activity/PlaybackReportingReader.cs`
 - `Services/Activity/LegacyDataImportService.cs`
 - `Services/Activity/UserActivityCacheService.cs`
 - `Services/Activity/UserActivityCoverage.cs`
@@ -145,6 +149,7 @@ The documentation drift guard checks that each production and test source file i
 - `Api/WatchbackApiTests.cs`
 - `Configuration/YearlyRewindConfigurationTests.cs`
 - `ContributingDocCoverageTests.cs`
+- `Services/Activity/PlaybackReportingImportTests.cs`
 - `Services/Activity/LegacyDataImportTests.cs`
 - `Services/Activity/UserActivityCacheServiceTests.cs`
 - `Services/Activity/UserActivityDtoTests.cs`

@@ -25,7 +25,12 @@ internal static class YearlyRewindAggregator
         var estimated = new Dictionary<Guid, double>();
         var months = CreateMonths(start, cutoff, zone);
         var totals = Measure(sessions, start, cutoff, zone, itemGenres, months);
-        var reconstructed = Reconstruct(history, start, cutoff, generated);
+        var imported = history.ImportedPlayback.Where(row => row.ImportedAtUtc <= generated && row.StartedAtUtc >= start && row.StartedAtUtc < cutoff
+            && row.StartedAtUtc < (history.PlaybackReportingBeforeUtc ?? cutoff)).ToArray();
+        var importCounts = new Dictionary<Guid, int>();
+        AddImported(imported, metadata, itemGenres, estimated, importCounts, totals, months, cutoff);
+        var reconstructed = Reconstruct(history, start, cutoff, generated)
+            .Where(row => !importCounts.ContainsKey(row.Item.ItemId)).ToArray();
         AddReconstructed(reconstructed, metadata, itemGenres, estimated, totals, months);
         CompleteMonthlyGenres(months, totals);
         var seconds = totals.Seconds;
@@ -41,10 +46,12 @@ internal static class YearlyRewindAggregator
             ActiveSeconds = seconds[pair.Key],
             EstimatedSeconds = estimated.GetValueOrDefault(pair.Key),
             HasReconstructedActivity = estimated.ContainsKey(pair.Key),
-            PlayCount = plays.GetValueOrDefault(pair.Key) + (estimated.ContainsKey(pair.Key) ? 1 : 0)
+            PlaybackReportingPlayCount = importCounts.GetValueOrDefault(pair.Key),
+            PlayCount = plays.GetValueOrDefault(pair.Key) + importCounts.GetValueOrDefault(pair.Key)
+                + (reconstructed.Any(row => row.Item.ItemId == pair.Key) ? 1 : 0)
         }).OrderByDescending(item => item.ActiveSeconds).ThenBy(item => item.Name, StringComparer.Ordinal).ThenBy(item => item.ItemId).ToList();
         var coverage = history.Coverage.OrderBy(period => period.StartUtc).ToArray();
-        var state = DescribeCollection(coverage, start, cutoff, reconstructed.Length, items.Count > 0);
+        var state = DescribeCollection(coverage, start, cutoff, reconstructed.Length + importCounts.Count, items.Count > 0);
         YearlyRewindComparison? comparison = null;
         if (previous is not null && previous.UserId == userId && previous.SnapshotAtUtc == start
             && previous.DataState is "Ready" or "Empty" or "Partial")
@@ -166,6 +173,36 @@ internal static class YearlyRewindAggregator
                     {
                         totals.MonthlyGenres[monthIndex][genre] = totals.MonthlyGenres[monthIndex].GetValueOrDefault(genre) + (allocated / active.Count / genres.Length);
                     }
+                }
+            }
+        }
+    }
+
+    private static void AddImported(ImportedPlayback[] imported, Dictionary<Guid, UserPlaybackItem> metadata, Dictionary<Guid, string[]> itemGenres, Dictionary<Guid, double> estimated, Dictionary<Guid, int> counts, MeasuredPlayback totals, YearlyRewindMonth[] months, DateTimeOffset cutoff)
+    {
+        foreach (var row in imported)
+        {
+            var id = row.Item.ItemId;
+            metadata.TryAdd(id, row.Item);
+            itemGenres.TryAdd(id, GenreNames(row.Item));
+            // Durations come from Playback Reporting, but their positions within a session
+            // are unknown. Assign them to the start month and do not invent viewing patterns.
+            var duration = Math.Min(row.ActiveSeconds, (cutoff - row.StartedAtUtc).TotalSeconds);
+            totals.Seconds[id] = totals.Seconds.GetValueOrDefault(id) + duration;
+            estimated[id] = estimated.GetValueOrDefault(id) + duration;
+            counts[id] = counts.GetValueOrDefault(id) + 1;
+            for (var index = 0; index < months.Length; index++)
+            {
+                if (row.StartedAtUtc < months[index].StartUtc || row.StartedAtUtc >= months[index].EndUtc)
+                {
+                    continue;
+                }
+
+                months[index].ActiveSeconds += duration;
+                months[index].EstimatedSeconds += duration;
+                foreach (var genre in itemGenres[id])
+                {
+                    totals.MonthlyGenres[index][genre] = totals.MonthlyGenres[index].GetValueOrDefault(genre) + (duration / itemGenres[id].Length);
                 }
             }
         }

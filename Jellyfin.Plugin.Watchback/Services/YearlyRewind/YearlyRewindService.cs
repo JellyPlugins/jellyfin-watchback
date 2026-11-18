@@ -64,7 +64,7 @@ public sealed class YearlyRewindService : IUserActivityHistoryConsumer
         }
     }
 
-    void IUserActivityHistoryConsumer.Tick(DateTimeOffset now, IReadOnlyCollection<User> users, Func<Guid, UserActivityHistory> history, bool hasNewBaseline)
+    void IUserActivityHistoryConsumer.Tick(DateTimeOffset now, IReadOnlyCollection<User> users, Func<Guid, UserActivityHistory> history, bool hasNewBaseline, bool historyReady)
     {
         lock (_gate)
         {
@@ -92,12 +92,12 @@ public sealed class YearlyRewindService : IUserActivityHistoryConsumer
             _enabled = true;
             foreach (var userId in users.Where(user => !user.HasPermission(PermissionKind.IsDisabled)).Select(user => user.Id))
             {
-                PublishForUser(userId, now, cutoff, config, history);
+                PublishForUser(userId, now, cutoff, config, history, historyReady);
             }
         }
     }
 
-    private void PublishForUser(Guid userId, DateTimeOffset now, DateTimeOffset cutoff, PluginConfiguration config, Func<Guid, UserActivityHistory> history)
+    private void PublishForUser(Guid userId, DateTimeOffset now, DateTimeOffset cutoff, PluginConfiguration config, Func<Guid, UserActivityHistory> history, bool historyReady)
     {
         if (!_baselineCutoffs.TryGetValue(userId, out var baseline) || baseline < cutoff
             || (_checkedCutoffs.TryGetValue(userId, out var checkedAt) && checkedAt >= cutoff))
@@ -109,10 +109,11 @@ public sealed class YearlyRewindService : IUserActivityHistoryConsumer
         {
             var current = RecoverPending(userId, cutoff);
 
-            if (NeedsPublication(current, cutoff))
+            if (historyReady && NeedsPublication(current, cutoff))
             {
                 var facts = history(userId);
                 if (current is not null || facts.Coverage.Any(period => period.StartUtc < cutoff)
+                    || facts.ImportedPlayback.Any(row => row.StartedAtUtc < cutoff)
                     || facts.Observations.Any(row => row.LastPlayedAtUtc < cutoff)
                     || YearlyRewindWindow.IsTabVisible(now, config.YearlyRewindStartDate, config.YearlyRewindEndDate, TimeZoneInfo.Local))
                 {
@@ -120,7 +121,7 @@ public sealed class YearlyRewindService : IUserActivityHistoryConsumer
                 }
             }
 
-            if (current is not null)
+            if (current is not null && !NeedsPublication(current, cutoff))
             {
                 _checkedCutoffs[userId] = cutoff;
             }

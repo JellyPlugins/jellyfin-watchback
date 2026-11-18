@@ -9,7 +9,7 @@ internal interface IUserActivityHistoryConsumer
 {
     bool NeedsCurrentState(DateTimeOffset now, IReadOnlyCollection<User> users);
 
-    void Tick(DateTimeOffset now, IReadOnlyCollection<User> users, Func<Guid, UserActivityHistory> history, bool hasNewBaseline);
+    void Tick(DateTimeOffset now, IReadOnlyCollection<User> users, Func<Guid, UserActivityHistory> history, bool hasNewBaseline, bool historyReady = true);
 
     IEnumerable<Guid> KnownUsers();
 

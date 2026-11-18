@@ -267,6 +267,7 @@
         panel.append(heading);
         var state = value(report, 'DataState');
         if (reconstructedCount()) panel.append(node('p', text('reconstructed').replace('{count}', number(reconstructedCount())), 'jfw-rewind-notice'));
+        if (value(report, 'PlaybackReportingPlayCount') > 0) panel.append(node('p', text('playbackReporting').replace('{count}', number(value(report, 'PlaybackReportingPlayCount'))), 'jfw-rewind-secondary'));
         if ((state === 'Partial' && !reconstructedCount()) || state === 'NotCollected') panel.append(node('p', text(state === 'Partial' ? 'partial' : 'notCollected'), 'jfw-rewind-notice'));
         if (state === 'NotCollected') return;
         var items = value(report, 'Items') || [];
@@ -434,6 +435,7 @@
         currentTopGenre: "Current top genre",
         newGenres: "Genres absent from the previous report",
         none: "None",
+        playbackReporting: "Historical plays imported from Playback Reporting: {count}.",
         reconstructed: "Includes {count} titles reconstructed from Jellyfin data. Watch time may be estimated or unavailable. Viewing habits and active days use measured playback only.",
         measuredActiveDays: "Measured active days",
         noMeasuredInsights: "These details require measured playback. Only reconstructed activity is available for this period.",

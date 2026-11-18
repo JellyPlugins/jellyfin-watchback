@@ -24,8 +24,16 @@ rm -rf -- "$plugin_dir"
 mkdir -p "$plugin_dir" "$runtime_dir/cache" "$runtime_dir/media"
 cp "$runtime_dir/publish/"* "$plugin_dir/"
 python3 - "$plugin_dir" "$plugin_version" <<'META'
-import json,sys,pathlib
+import json,sys,pathlib,shutil
 p=pathlib.Path(sys.argv[1]);(p/'meta.json').write_text(json.dumps({'guid':'16f5f0be-353b-48c4-a5f1-d41d9b08b264','name':'jellyfin-watchback','version':sys.argv[2],'targetAbi':'12.4.0.0','status':'Active','autoUpdate':False,'assemblies':[]}))
+# A disabled installation with retained data exercises optional detection without
+# running another collector or downloading an external plugin during E2E tests.
+fixture=p.parent/'playback-reporting-history-fixture_1.0.0.0'
+fixture.mkdir(exist_ok=True)
+# Jellyfin discovers only plugin folders containing an assembly. The disabled
+# fixture never loads or executes this marker assembly.
+shutil.copy2(p/'Jellyfin.Plugin.Watchback.dll',fixture/'marker.dll')
+(fixture/'meta.json').write_text(json.dumps({'guid':'5c534381-91a3-43cb-907a-35aa02eb9d2c','name':'Playback Reporting history fixture','version':'1.0.0.0','targetAbi':'12.4.0.0','status':'Disabled','autoUpdate':False,'assemblies':[]}))
 META
 docker run --rm --entrypoint bash -v "$runtime_dir/media:/media" -v "$e2e_dir/fixtures:/fixtures:ro" jellyfin/jellyfin:12.4 /fixtures/gen-media.sh /media
 docker compose -f "$e2e_dir/compose.yml" up -d --wait --wait-timeout 240

@@ -12,6 +12,7 @@ namespace Jellyfin.Plugin.Watchback.Services.Activity;
 internal sealed class UserActivityHistory
 {
     private Dictionary<Guid, List<UserPlaybackObservation>>? _byItem;
+    private Dictionary<string, int>? _importsByKey;
 
     public int SchemaVersion { get; init; } = 2;
 
@@ -22,6 +23,49 @@ internal sealed class UserActivityHistory
     public Collection<UserPlaybackSession> Sessions { get; init; } = [];
 
     public Collection<UserPlaybackObservation> Observations { get; init; } = [];
+
+    // Additive schema-2 fields keep existing journals readable. This boundary never advances
+    // on restart, even if the Playback Reporting plugin is installed later.
+    public DateTimeOffset? PlaybackReportingBeforeUtc { get; set; }
+
+    public Collection<ImportedPlayback> ImportedPlayback { get; init; } = [];
+
+    internal bool Import(PlaybackReportingReader.Entry entry, UserPlaybackItem item, DateTimeOffset now)
+    {
+        var boundary = PlaybackReportingBeforeUtc ?? Coverage.Select(period => (DateTimeOffset?)period.StartUtc).Min() ?? now;
+        if (entry.StartedAtUtc >= boundary)
+        {
+            return false;
+        }
+
+        var duration = Math.Min(entry.ActiveSeconds, (boundary - entry.StartedAtUtc).TotalSeconds);
+        var key = Remember(item);
+        _importsByKey ??= ImportedPlayback.Select((row, index) => (row.SourceKey, Index: index))
+            .ToDictionary(row => row.SourceKey, row => row.Index, StringComparer.Ordinal);
+        var found = _importsByKey.TryGetValue(entry.SourceKey, out var index);
+        var previous = found ? ImportedPlayback[index] : null;
+        if (previous is not null && previous.ActiveSeconds == duration && previous.MetadataKey == key)
+        {
+            return false;
+        }
+
+        var imported = new ImportedPlayback
+        {
+            SourceKey = entry.SourceKey, MetadataKey = key, Item = Metadata[key],
+            StartedAtUtc = entry.StartedAtUtc, ImportedAtUtc = now, ActiveSeconds = duration
+        };
+        if (previous is null)
+        {
+            _importsByKey[entry.SourceKey] = ImportedPlayback.Count;
+            ImportedPlayback.Add(imported);
+        }
+        else
+        {
+            ImportedPlayback[index] = imported;
+        }
+
+        return true;
+    }
 
     internal string Remember(UserPlaybackItem item)
     {

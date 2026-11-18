@@ -270,3 +270,14 @@ test.each(['2028-02-28', '2028-02-29', '2028-03-01', '2028-12-31'])('E2E annual 
  expect(todayMonthDay(1, now)).not.toBe('02-29');
  expect(todayMonthDay(1, now)).not.toBe(today);
 });
+
+
+test('identifies imported Playback Reporting history and keeps old reports readable', async () => {
+ extra = {PlaybackReportingPlayCount: 12, ReconstructedItemCount: 1, DataState: 'Partial'};
+ loadYearlyRewindBundle(); await flush();
+ expect(root.textContent).toContain('Historical plays imported from Playback Reporting: 12.');
+ expect(root.textContent).toContain('Includes 1 titles reconstructed from Jellyfin data.');
+ extra = {}; id = 'snapshot-b';
+ document.dispatchEvent(new Event('jfw:session-changed')); await flush();
+ expect(root.textContent).not.toContain('Historical plays imported');
+});

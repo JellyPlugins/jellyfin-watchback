@@ -34,12 +34,16 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
     private readonly ILogger<UserActivityHistoryService> _logger;
     private readonly UserActivityHistoryStore _store;
     private readonly IUserActivityHistoryConsumer[] _consumers;
+    private readonly PlaybackReportingReader? _reporting;
     private readonly UserPlaybackTracker _tracker = new();
     private readonly Dictionary<Guid, UserActivityHistory> _histories = [];
     private readonly Dictionary<Guid, DateTimeOffset> _historyRetryAt = [];
     private readonly Dictionary<Guid, UserActivityCoverage> _coverage = [];
     private readonly HashSet<Guid> _dirty = [];
     private readonly Lock _gate = new();
+    private DateTimeOffset _nextReportingRefresh;
+    private bool _reportingReady;
+    private bool _reportingCurrent;
     private bool _initialized;
     private DateTimeOffset _lastTick;
     private DateTimeOffset _lastFlush;
@@ -58,8 +62,11 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         IApplicationPaths paths,
         TimeProvider clock,
         IEnumerable<IUserActivityHistoryConsumer> consumers,
-        ILogger<UserActivityHistoryService> logger)
+        ILogger<UserActivityHistoryService> logger,
+        PlaybackReportingReader? reporting = null)
     {
+        _reporting = reporting;
+        _reportingReady = reporting is null;
         _configuration = configuration;
         _sessions = sessions;
         _users = users;
@@ -136,6 +143,17 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
 
         var availableUsers = users.Where(user => !user.HasPermission(PermissionKind.IsDisabled) && TryHistory(user.Id, now, out _)).ToArray();
         var needsCurrent = _consumers.Any(consumer => consumer.NeedsCurrentState(now, availableUsers));
+        foreach (var user in availableUsers)
+        {
+            var history = History(user.Id);
+            if (!history.PlaybackReportingBeforeUtc.HasValue)
+            {
+                history.PlaybackReportingBeforeUtc = history.Coverage.Select(period => (DateTimeOffset?)period.StartUtc).Min() ?? now;
+                _dirty.Add(user.Id);
+            }
+        }
+
+        RefreshReporting(availableUsers, now, needsCurrent);
         var refreshed = false;
         if (allowRefresh && (!_initialized || now >= _nextRefresh || needsCurrent) && now >= _retryRefresh)
         {
@@ -151,7 +169,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         {
             foreach (var consumer in _consumers)
             {
-                consumer.Tick(now, availableUsers, History, refreshed);
+                consumer.Tick(now, availableUsers, History, refreshed, _reportingReady);
             }
         }
 
@@ -162,6 +180,80 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         {
             Flush();
             _lastFlush = now;
+        }
+    }
+
+    private void RefreshReporting(User[] users, DateTimeOffset now, bool needsCurrent)
+    {
+        if (!needsCurrent)
+        {
+            _reportingCurrent = false;
+        }
+
+        if (_reporting is null || (now < _nextReportingRefresh && (!needsCurrent || _reportingCurrent)))
+        {
+            return;
+        }
+
+        _reportingCurrent = needsCurrent;
+        try
+        {
+            var available = users.ToDictionary(user => user.Id);
+            var imported = 0;
+            foreach (var entry in _reporting.Read(now))
+            {
+                if (!available.TryGetValue(entry.UserId, out var user))
+                {
+                    continue;
+                }
+
+                var history = History(user.Id);
+                if (entry.StartedAtUtc >= history.PlaybackReportingBeforeUtc)
+                {
+                    continue;
+                }
+
+                var existing = _library.GetItemById(entry.ItemId);
+                if (existing is not null && (_virtualItems.IsVirtual(existing) || !existing.IsVisible(user)))
+                {
+                    continue;
+                }
+
+                var episode = existing as Episode;
+                var genres = existing?.Genres ?? [];
+                if (genres.Length == 0 && episode?.Series is { } parent)
+                {
+                    genres = parent.Genres;
+                }
+
+                var item = new UserPlaybackItem
+                {
+                    ItemId = entry.ItemId, Name = entry.Name, ItemType = entry.ItemType,
+                    SeriesId = episode?.SeriesId, SeriesName = episode?.SeriesName,
+                    RuntimeTicks = Math.Max(0, existing?.RunTimeTicks ?? 0), Genres = new Collection<string>(genres)
+                };
+                if (history.Import(entry, item, now))
+                {
+                    imported++;
+                    _dirty.Add(user.Id);
+                }
+            }
+
+            if (imported > 0 && _logger.IsEnabled(LogLevel.Information))
+            {
+                _logger.LogInformation("Imported or updated {Count} historical Playback Reporting entries.", imported);
+            }
+
+            _reportingReady = true;
+            _nextReportingRefresh = now.AddHours(1);
+        }
+        catch (Exception ex) when (!ex.IsFatal())
+        {
+            // Collection continues, but do not freeze a new annual report while its import is
+            // incomplete. Previously published reports remain available and unchanged.
+            _reportingReady = false;
+            _nextReportingRefresh = now.AddMinutes(1);
+            _logger.LogWarning(ex, "Could not import Playback Reporting history; retrying before publishing new annual reports.");
         }
     }
 
@@ -263,7 +355,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
             _initialized = true;
             foreach (var consumer in _consumers)
             {
-                consumer.Tick(now, _users.GetUsers().Where(user => !user.HasPermission(PermissionKind.IsDisabled) && TryHistory(user.Id, now, out _)).ToArray(), History, true);
+                consumer.Tick(now, _users.GetUsers().Where(user => !user.HasPermission(PermissionKind.IsDisabled) && TryHistory(user.Id, now, out _)).ToArray(), History, true, _reportingReady);
             }
 
             Flush();

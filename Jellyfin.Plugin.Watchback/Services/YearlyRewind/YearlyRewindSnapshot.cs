@@ -25,6 +25,8 @@ internal sealed record YearlyRewindSnapshot
 
     public int ActiveDays { get; init; }
 
+    public int PlaybackReportingPlayCount => Items.Sum(item => item.PlaybackReportingPlayCount);
+
     public int ReconstructedItemCount => Items.Count(item => item.HasReconstructedActivity);
 
     // Optional additions keep already-frozen schema-1 reports readable without inventing facts.

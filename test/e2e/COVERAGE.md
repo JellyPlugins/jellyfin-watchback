@@ -2,6 +2,7 @@
 
 | Specification | Coverage |
 | --- | --- |
+| `playback-reporting.api.spec.ts` | Retained Playback Reporting installation metadata and real SQLite data; caller-bound import, read-only source, idempotent retries and immutable reports |
 | `configuration.api.spec.ts` | Plugin registration; administrator-only settings; rejected invalid dates; public translations |
 | `yearly-rewind.api.spec.ts` | Caller-bound frozen report, retained data outside the season and when disabled, anonymous rejection, new measured playback with display disabled |
 | `yearly-rewind-native-tab.ui.spec.ts` | Modern and desktop-legacy native Home tab; actual rendered metrics; tab removal after disabling |

@@ -75,5 +75,6 @@
   "rewind.hourUnitLong": "Stunden",
   "rewind.hourUnit": "h",
   "savingSettings": "Einstellungen werden gespeichert…",
-  "settingsError": "Einstellungen konnten nicht gespeichert werden."
+  "settingsError": "Einstellungen konnten nicht gespeichert werden.",
+  "rewind.playbackReporting": "Aus Playback Reporting importierte frühere Wiedergaben: {count}."
 }
