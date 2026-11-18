@@ -1,0 +1,22 @@
+{
+  "name": "jellyfin-watchback-ui-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tests for the Jellyfin Watchback plugin.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "node scripts/test-coverage.mjs",
+    "coverage:check": "node scripts/check-coverage.mjs --lines=85 --branches=80"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "istanbul-lib-instrument": "6.0.3",
+    "jsdom": "31.0.1",
+    "vitest": "5.1.0"
+  },
+  "engines": {
+    "node": ">=26.0.0"
+  }
+}

@@ -1,0 +1,45 @@
+name: Deploy GitHub Pages Demo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Jellyfin.Plugin.Watchback/PluginPages/**'
+      - 'Jellyfin.Plugin.Watchback/js/**'
+      - 'Jellyfin.Plugin.Watchback/i18n/**'
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+      - '.github/scripts/prepare-demo-site.ps1'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Deploy step uses ${{ secrets.GITHUB_TOKEN }} explicitly; do not persist
+          # the token in local git config to reduce blast radius of any repo-controlled step.
+          persist-credentials: false
+
+      - name: Prepare demo site
+        shell: pwsh
+        run: ./.github/scripts/prepare-demo-site.ps1
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./docs
+          # Keep existing pr-preview directories intact
+          keep_files: true

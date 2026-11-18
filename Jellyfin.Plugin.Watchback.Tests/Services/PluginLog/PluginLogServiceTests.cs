@@ -1,0 +1,1269 @@
+using Jellyfin.Plugin.Watchback.Configuration;
+using Jellyfin.Plugin.Watchback.Services.ConfigAccess;
+using Jellyfin.Plugin.Watchback.Services.PluginLog;
+using Jellyfin.Plugin.Watchback.Tests.TestFixtures;
+using Microsoft.Extensions.Logging;
+using Moq;
+using Xunit;
+
+namespace Jellyfin.Plugin.Watchback.Tests.Services.PluginLog;
+
+/// <summary>
+///     Unit tests for PluginLogService. All tests use unique source markers (e.g.
+/// </summary>
+[Collection("ConfigOverride")]
+public class PluginLogServiceTests : IDisposable
+{
+    private readonly PluginLogService _sut = TestMockFactory.CreatePluginLogService();
+
+    /// <summary>
+    ///     Initializes a new instance of the <see cref="PluginLogServiceTests" /> class.
+    ///     Sets minimum level to DEBUG before each test.
+    /// </summary>
+    public PluginLogServiceTests()
+    {
+        _sut.TestMinLevelOverride = "DEBUG";
+        _sut.Clear();
+    }
+
+    /// <summary>
+    ///     Cleans up after each test by clearing the log buffer and resetting the override.
+    /// </summary>
+    public void Dispose()
+    {
+        _sut.Clear();
+        _sut.TestMinLevelOverride = null;
+    }
+
+    /// <summary>
+    ///     Verifies that LogDebug adds an entry with level DEBUG and correct fields.
+    /// </summary>
+    [Fact]
+    public void LogDebug_AddsDebugEntry_WithCorrectFields()
+    {
+        const string src = "__PLT_DebugFields__";
+        _sut.LogDebug(src, "Debug message");
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("DEBUG", entry.Level);
+        Assert.Equal(src, entry.Source);
+        Assert.Equal("Debug message", entry.Message);
+        Assert.Null(entry.Exception);
+    }
+
+    /// <summary>
+    ///     Verifies that LogDebug entries are filtered out by AddEntry when MinLevel is INFO.
+    /// </summary>
+    [Fact]
+    public void LogDebug_NotStored_WhenMinLevelIsInfo()
+    {
+        const string src = "__PLT_DebugNotInfo__";
+        _sut.TestMinLevelOverride = "INFO";
+
+        _sut.LogDebug(src, "Should not be stored");
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Empty(entries);
+    }
+
+    /// <summary>
+    ///     Verifies that LogDebug entries are filtered out by AddEntry when MinLevel is WARN.
+    /// </summary>
+    [Fact]
+    public void LogDebug_NotStored_WhenMinLevelIsWarn()
+    {
+        const string src = "__PLT_DebugNotWarn__";
+        _sut.TestMinLevelOverride = "WARN";
+
+        _sut.LogDebug(src, "Should not be stored");
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Empty(entries);
+    }
+
+    /// <summary>
+    ///     Verifies that LogDebug entries are filtered out by AddEntry when MinLevel is ERROR.
+    /// </summary>
+    [Fact]
+    public void LogDebug_NotStored_WhenMinLevelIsError()
+    {
+        const string src = "__PLT_DebugNotErr__";
+        _sut.TestMinLevelOverride = "ERROR";
+
+        _sut.LogDebug(src, "Should not be stored");
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Empty(entries);
+    }
+
+    /// <summary>
+    ///     Verifies that LogDebug IS stored when MinLevel is DEBUG.
+    /// </summary>
+    [Fact]
+    public void LogDebug_Stored_WhenMinLevelIsDebug()
+    {
+        const string src = "__PLT_DebugStored__";
+        _sut.TestMinLevelOverride = "DEBUG";
+
+        _sut.LogDebug(src, "Should be stored");
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("DEBUG", entry.Level);
+    }
+
+    /// <summary>
+    ///     Verifies that LogDebug forwards to ILogger.LogDebug when logger is provided.
+    /// </summary>
+    [Fact]
+    public void LogDebug_ForwardsToILogger()
+    {
+        var mockLogger = TestMockFactory.CreateLogger();
+
+        _sut.LogDebug("__PLT_Fwd__", "Msg", mockLogger.Object);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Debug,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v!.ToString()!.Contains("Msg")),
+                null,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    ///     Verifies that LogDebug with null logger does not throw.
+    /// </summary>
+    [Fact]
+    public void LogDebug_NullLogger_DoesNotThrow()
+    {
+        var ex = Record.Exception(() => _sut.LogDebug("__PLT__", "No crash"));
+        Assert.Null(ex);
+    }
+
+    /// <summary>
+    ///     Verifies that LogInfo adds an entry with level INFO and correct fields.
+    /// </summary>
+    [Fact]
+    public void LogInfo_AddsInfoEntry_WithCorrectFields()
+    {
+        const string src = "__PLT_InfoFields__";
+        _sut.LogInfo(src, "Info message");
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("INFO", entry.Level);
+        Assert.Equal(src, entry.Source);
+        Assert.Equal("Info message", entry.Message);
+        Assert.Null(entry.Exception);
+    }
+
+    /// <summary>
+    ///     Verifies that LogInfo entries are filtered out by AddEntry when MinLevel is WARN.
+    /// </summary>
+    [Fact]
+    public void LogInfo_NotStored_WhenMinLevelIsWarn()
+    {
+        const string src = "__PLT_InfoNotWarn__";
+        _sut.TestMinLevelOverride = "WARN";
+
+        _sut.LogInfo(src, "Should not be stored");
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Empty(entries);
+    }
+
+    /// <summary>
+    ///     Verifies that LogInfo entries are filtered out by AddEntry when MinLevel is ERROR.
+    /// </summary>
+    [Fact]
+    public void LogInfo_NotStored_WhenMinLevelIsError()
+    {
+        const string src = "__PLT_InfoNotErr__";
+        _sut.TestMinLevelOverride = "ERROR";
+
+        _sut.LogInfo(src, "Should not be stored");
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Empty(entries);
+    }
+
+    /// <summary>
+    ///     Verifies that LogInfo IS stored when MinLevel is INFO.
+    /// </summary>
+    [Fact]
+    public void LogInfo_Stored_WhenMinLevelIsInfo()
+    {
+        const string src = "__PLT_InfoStoredINFO__";
+        _sut.TestMinLevelOverride = "INFO";
+
+        _sut.LogInfo(src, "Should be stored");
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("INFO", entry.Level);
+    }
+
+    /// <summary>
+    ///     Verifies that LogInfo IS stored when MinLevel is DEBUG.
+    /// </summary>
+    [Fact]
+    public void LogInfo_Stored_WhenMinLevelIsDebug()
+    {
+        const string src = "__PLT_InfoStoredDBG__";
+        _sut.TestMinLevelOverride = "DEBUG";
+
+        _sut.LogInfo(src, "Should be stored");
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("INFO", entry.Level);
+    }
+
+    /// <summary>
+    ///     Verifies that LogInfo forwards to ILogger.LogInformation when logger is provided.
+    /// </summary>
+    [Fact]
+    public void LogInfo_ForwardsToILogger()
+    {
+        var mockLogger = TestMockFactory.CreateLogger();
+
+        _sut.LogInfo("__PLT_Fwd__", "InfoMsg", mockLogger.Object);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v!.ToString()!.Contains("InfoMsg")),
+                null,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    ///     Verifies that LogInfo with null logger does not throw.
+    /// </summary>
+    [Fact]
+    public void LogInfo_NullLogger_DoesNotThrow()
+    {
+        var ex = Record.Exception(() => _sut.LogInfo("__PLT__", "No crash"));
+        Assert.Null(ex);
+    }
+
+    /// <summary>
+    ///     Verifies that LogWarning adds an entry with level WARN.
+    /// </summary>
+    [Fact]
+    public void LogWarning_AddsWarnEntry()
+    {
+        const string src = "__PLT_WarnFields__";
+        _sut.LogWarning(src, "Warning message");
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("WARN", entry.Level);
+        Assert.Equal(src, entry.Source);
+        Assert.Equal("Warning message", entry.Message);
+        Assert.Null(entry.Exception);
+    }
+
+    /// <summary>
+    ///     Verifies that LogWarning with exception includes exception details.
+    /// </summary>
+    [Fact]
+    public void LogWarning_WithException_IncludesExceptionString()
+    {
+        const string src = "__PLT_WarnEx__";
+        var ex = new InvalidOperationException("Access denied");
+        _sut.LogWarning(src, "Warning occurred", ex);
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("WARN", entry.Level);
+        Assert.NotNull(entry.Exception);
+        Assert.Contains("Access denied", entry.Exception, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that LogWarning entries are filtered out when MinLevel is ERROR.
+    /// </summary>
+    [Fact]
+    public void LogWarning_NotStored_WhenMinLevelIsError()
+    {
+        const string src = "__PLT_WarnNotErr__";
+        _sut.TestMinLevelOverride = "ERROR";
+
+        _sut.LogWarning(src, "Should not be stored");
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Empty(entries);
+    }
+
+    /// <summary>
+    ///     Verifies that LogWarning IS stored when MinLevel is WARN.
+    /// </summary>
+    [Fact]
+    public void LogWarning_Stored_WhenMinLevelIsWarn()
+    {
+        const string src = "__PLT_WarnStoredW__";
+        _sut.TestMinLevelOverride = "WARN";
+
+        _sut.LogWarning(src, "Should be stored");
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("WARN", entry.Level);
+    }
+
+    /// <summary>
+    ///     Verifies that LogWarning forwards to ILogger.LogWarning (without exception).
+    /// </summary>
+    [Fact]
+    public void LogWarning_ForwardsToILogger_WithoutException()
+    {
+        var mockLogger = TestMockFactory.CreateLogger();
+
+        _sut.LogWarning("__PLT__", "WarnMsg", logger: mockLogger.Object);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v!.ToString()!.Contains("WarnMsg")),
+                null,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    ///     Verifies that LogWarning forwards to ILogger.LogWarning (with exception).
+    /// </summary>
+    [Fact]
+    public void LogWarning_ForwardsToILogger_WithException()
+    {
+        var mockLogger = TestMockFactory.CreateLogger();
+        var exception = new InvalidOperationException("test");
+
+        _sut.LogWarning("__PLT__", "WarnMsg", exception, mockLogger.Object);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v!.ToString()!.Contains("WarnMsg")),
+                exception,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    ///     Verifies that LogError adds an entry with level ERROR.
+    /// </summary>
+    [Fact]
+    public void LogError_AddsEntry()
+    {
+        const string src = "__PLT_ErrFields__";
+        _sut.LogError(src, "Test error message");
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("ERROR", entry.Level);
+        Assert.Equal(src, entry.Source);
+        Assert.Equal("Test error message", entry.Message);
+        Assert.Null(entry.Exception);
+    }
+
+    /// <summary>
+    ///     Verifies that LogError with exception includes exception details.
+    /// </summary>
+    [Fact]
+    public void LogError_WithException_IncludesExceptionString()
+    {
+        const string src = "__PLT_ErrEx__";
+        var ex = new InvalidOperationException("Something failed");
+        _sut.LogError(src, "Error occurred", ex);
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.NotNull(entry.Exception);
+        Assert.Contains("Something failed", entry.Exception, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that LogError IS stored even when MinLevel is ERROR (equal level).
+    /// </summary>
+    [Fact]
+    public void LogError_Stored_WhenMinLevelIsError()
+    {
+        const string src = "__PLT_ErrStoredE__";
+        _sut.TestMinLevelOverride = "ERROR";
+
+        _sut.LogError(src, "Should be stored");
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("ERROR", entry.Level);
+    }
+
+    /// <summary>
+    ///     Verifies that LogError forwards to ILogger.LogError (without exception).
+    /// </summary>
+    [Fact]
+    public void LogError_ForwardsToILogger_WithoutException()
+    {
+        var mockLogger = TestMockFactory.CreateLogger();
+
+        _sut.LogError("__PLT__", "ErrMsg", logger: mockLogger.Object);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v!.ToString()!.Contains("ErrMsg")),
+                null,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    ///     Verifies that LogError forwards to ILogger.LogError (with exception).
+    /// </summary>
+    [Fact]
+    public void LogError_ForwardsToILogger_WithException()
+    {
+        var mockLogger = TestMockFactory.CreateLogger();
+        var exception = new InvalidOperationException("fatal");
+
+        _sut.LogError("__PLT__", "ErrMsg", exception, mockLogger.Object);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v!.ToString()!.Contains("ErrMsg")),
+                exception,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    ///     Verifies that LogError with null logger does not throw.
+    /// </summary>
+    [Fact]
+    public void LogError_NullLogger_DoesNotThrow()
+    {
+        var ex = Record.Exception(() => _sut.LogError("__PLT__", "No crash"));
+        Assert.Null(ex);
+    }
+
+    /// <summary>
+    ///     Verifies that the configured MinLevel governs which levels are retained in the buffer.
+    /// </summary>
+    /// <param name="minLevel">The configured minimum level.</param>
+    /// <param name="expectedCount">The number of entries expected to be stored.</param>
+    /// <param name="expectedLevels">Comma separated set of levels expected to be stored.</param>
+    [Theory]
+    [InlineData("ERROR", 1, "ERROR")]
+    [InlineData("WARN", 2, "WARN,ERROR")]
+    [InlineData("INFO", 3, "INFO,WARN,ERROR")]
+    [InlineData("DEBUG", 4, "DEBUG,INFO,WARN,ERROR")]
+    public void AddEntry_MinLevel_StoresLevelsAtOrAboveThreshold(string minLevel, int expectedCount, string expectedLevels)
+    {
+        const string src = "__PLT_Matrix__";
+        _sut.TestMinLevelOverride = minLevel;
+
+        _sut.LogDebug(src, "d");
+        _sut.LogInfo(src, "i");
+        _sut.LogWarning(src, "w");
+        _sut.LogError(src, "e");
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Equal(expectedCount, entries.Count);
+
+        var expected = expectedLevels.Split(',');
+        Assert.Equal(expected.OrderBy(l => l), entries.Select(e => e.Level).OrderBy(l => l));
+    }
+
+    /// <summary>
+    ///     Verifies that ILogger dual-logging still happens even when AddEntry filters out the entry.
+    /// </summary>
+    [Fact]
+    public void LogDebug_StillForwardsToILogger_EvenWhenFilteredFromBuffer()
+    {
+        const string src = "__PLT_FwdFiltered__";
+        _sut.TestMinLevelOverride = "ERROR"; // DEBUG won't be stored in buffer
+        var mockLogger = TestMockFactory.CreateLogger();
+
+        _sut.LogDebug(src, "Filtered debug msg", mockLogger.Object);
+
+        // Not stored in buffer
+        var entries = _sut.GetEntries(source: src);
+        Assert.Empty(entries);
+
+        // But still forwarded to ILogger
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Debug,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v!.ToString()!.Contains("Filtered debug msg")),
+                null,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    ///     Verifies that ILogger dual-logging still happens for INFO even when filtered from buffer.
+    /// </summary>
+    [Fact]
+    public void LogInfo_StillForwardsToILogger_EvenWhenFilteredFromBuffer()
+    {
+        const string src = "__PLT_FwdInfoFilt__";
+        _sut.TestMinLevelOverride = "ERROR";
+        var mockLogger = TestMockFactory.CreateLogger();
+
+        _sut.LogInfo(src, "Filtered info", mockLogger.Object);
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Empty(entries);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v!.ToString()!.Contains("Filtered info")),
+                null,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    // These lock in the contract of the IsEnabled(...) guards introduced with Jellyfin 12+ and .NET 10 CA1873.
+
+    /// <summary>
+    ///     Verifies that LogDebug does NOT forward to ILogger when IsEnabled(Debug) is false,
+    ///     but the entry is still added to the in-memory buffer.
+    /// </summary>
+    [Fact]
+    public void LogDebug_DoesNotForwardToILogger_WhenIsEnabledReturnsFalse()
+    {
+        const string src = "__PLT_NoFwdDebug__";
+        var mockLogger = new Mock<ILogger>();
+        mockLogger.Setup(l => l.IsEnabled(LogLevel.Debug)).Returns(false);
+
+        _sut.LogDebug(src, "Should not forward", mockLogger.Object);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Debug,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
+
+        // In-memory buffer still receives the entry (independent of ILogger filtering).
+        var entries = _sut.GetEntries(source: src);
+        Assert.Single(entries);
+    }
+
+    /// <summary>
+    ///     Verifies that LogInfo does NOT forward to ILogger when IsEnabled(Information) is false,
+    ///     but the entry is still added to the in-memory buffer.
+    /// </summary>
+    [Fact]
+    public void LogInfo_DoesNotForwardToILogger_WhenIsEnabledReturnsFalse()
+    {
+        const string src = "__PLT_NoFwdInfo__";
+        var mockLogger = new Mock<ILogger>();
+        mockLogger.Setup(l => l.IsEnabled(LogLevel.Information)).Returns(false);
+
+        _sut.LogInfo(src, "Should not forward", mockLogger.Object);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Single(entries);
+    }
+
+    /// <summary>
+    ///     Verifies that LogWarning does NOT forward to ILogger when IsEnabled(Warning) is false,
+    ///     but the entry is still added to the in-memory buffer.
+    /// </summary>
+    [Fact]
+    public void LogWarning_DoesNotForwardToILogger_WhenIsEnabledReturnsFalse()
+    {
+        const string src = "__PLT_NoFwdWarn__";
+        var mockLogger = new Mock<ILogger>();
+        mockLogger.Setup(l => l.IsEnabled(LogLevel.Warning)).Returns(false);
+
+        // Named 'logger:' argument because LogWarning's third positional parameter is Exception?.
+        _sut.LogWarning(src, "Should not forward", logger: mockLogger.Object);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Single(entries);
+    }
+
+    /// <summary>
+    ///     Verifies that LogError does NOT forward to ILogger when IsEnabled(Error) is false,
+    ///     but the entry is still added to the in-memory buffer.
+    /// </summary>
+    [Fact]
+    public void LogError_DoesNotForwardToILogger_WhenIsEnabledReturnsFalse()
+    {
+        const string src = "__PLT_NoFwdErr__";
+        var mockLogger = new Mock<ILogger>();
+        mockLogger.Setup(l => l.IsEnabled(LogLevel.Error)).Returns(false);
+
+        // Named 'logger:' argument because LogError's third positional parameter is Exception?.
+        _sut.LogError(src, "Should not forward", logger: mockLogger.Object);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Single(entries);
+    }
+
+    /// <summary>
+    ///     Verifies that GetConfiguredMinLevel returns the override when set.
+    /// </summary>
+    [Fact]
+    public void GetConfiguredMinLevel_ReturnsOverride_WhenSet()
+    {
+        _sut.TestMinLevelOverride = "WARN";
+        Assert.Equal("WARN", _sut.GetConfiguredMinLevel());
+    }
+
+    /// <summary>
+    ///     Verifies that GetConfiguredMinLevel returns INFO as default when no plugin and no override.
+    /// </summary>
+    [Fact]
+    public void GetConfiguredMinLevel_ReturnsInfo_WhenNoOverrideAndNoPlugin()
+    {
+        _sut.TestMinLevelOverride = null;
+
+        // Without plugin instance, should fall back to INFO
+        var level = _sut.GetConfiguredMinLevel();
+        Assert.Equal("INFO", level);
+    }
+
+    /// <summary>
+    ///     Verifies that entries are returned newest-first.
+    /// </summary>
+    [Fact]
+    public void GetEntries_ReturnsNewestFirst()
+    {
+        const string src = "__PLT_Order__";
+        _sut.LogError(src, "First");
+        _sut.LogError(src, "Second");
+        _sut.LogError(src, "Third");
+
+        var entries = _sut.GetEntries(source: src);
+        Assert.Equal(3, entries.Count);
+        Assert.Equal("Third", entries[0].Message);
+        Assert.Equal("Second", entries[1].Message);
+        Assert.Equal("First", entries[2].Message);
+    }
+
+    /// <summary>
+    ///     Verifies that the limit parameter caps the number of returned entries.
+    /// </summary>
+    [Fact]
+    public void GetEntries_RespectsLimit()
+    {
+        const string src = "__PLT_Limit__";
+        for (var i = 0; i < 10; i++) _sut.LogError(src, $"Message {i}");
+
+        var entries = _sut.GetEntries(source: src, limit: 3);
+        Assert.Equal(3, entries.Count);
+    }
+
+    /// <summary>
+    ///     Verifies that the limit returns the NEWEST entries (not oldest).
+    /// </summary>
+    [Fact]
+    public void GetEntries_LimitReturnsNewestEntries()
+    {
+        const string src = "__PLT_LimitNew__";
+        for (var i = 0; i < 5; i++) _sut.LogError(src, $"Message {i}");
+
+        var entries = _sut.GetEntries(source: src, limit: 2);
+        Assert.Equal(2, entries.Count);
+        Assert.Equal("Message 4", entries[0].Message); // newest
+        Assert.Equal("Message 3", entries[1].Message);
+    }
+
+    /// <summary>
+    ///     Verifies that the source filter works (partial, case-insensitive).
+    /// </summary>
+    [Fact]
+    public void GetEntries_FiltersBySource()
+    {
+        _sut.LogError("__PLT_Trickplay__", "Trickplay message");
+        _sut.LogError("__PLT_Subtitle__", "Subtitle message");
+        _sut.LogError("__PLT_Trickplay__", "Another trickplay");
+
+        var entries = _sut.GetEntries(source: "plt_trickplay");
+        Assert.Equal(2, entries.Count);
+        Assert.All(entries, e => Assert.Contains("Trickplay", e.Source, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    ///     Verifies that source filter with no match returns empty.
+    /// </summary>
+    [Fact]
+    public void GetEntries_SourceFilterNoMatch_ReturnsEmpty()
+    {
+        _sut.LogError("__PLT_API__", "Some error");
+
+        var entries = _sut.GetEntries(source: "NonExistentXYZ987");
+        Assert.Empty(entries);
+    }
+
+    /// <summary>
+    ///     Verifies that the minLevel query filter works on GetEntries.
+    /// </summary>
+    [Fact]
+    public void GetEntries_FiltersByMinLevel()
+    {
+        const string src = "__PLT_MinLvlQ__";
+        _sut.LogError(src, "Error");
+        _sut.LogWarning(src, "Warning");
+
+        var warnAndAbove = _sut.GetEntries("WARN", src);
+        Assert.Equal(2, warnAndAbove.Count);
+
+        var errorOnly = _sut.GetEntries("ERROR", src);
+        var errorEntry = Assert.Single(errorOnly);
+        Assert.Equal("ERROR", errorEntry.Level);
+    }
+
+    /// <summary>
+    ///     Verifies that DEBUG entries are excluded from GetEntries when minLevel query is INFO.
+    /// </summary>
+    [Fact]
+    public void GetEntries_MinLevelInfo_ExcludesDebug()
+    {
+        const string src = "__PLT_ExclDbg__";
+        _sut.LogDebug(src, "Debug msg");
+        _sut.LogInfo(src, "Info msg");
+        _sut.LogWarning(src, "Warn msg");
+        _sut.LogError(src, "Error msg");
+
+        var entries = _sut.GetEntries("INFO", src);
+        Assert.Equal(3, entries.Count);
+        Assert.DoesNotContain(entries, e => e.Level == "DEBUG");
+    }
+
+    /// <summary>
+    ///     Verifies that combined source and minLevel filters work together.
+    /// </summary>
+    [Fact]
+    public void GetEntries_CombinedFilter_SourceAndLevel()
+    {
+        _sut.LogDebug("__PLT_Cfg__", "Config debug");
+        _sut.LogWarning("__PLT_Cfg__", "Config warning");
+        _sut.LogError("__PLT_Trsh__", "Trash error");
+
+        var entries = _sut.GetEntries("WARN", "__PLT_Cfg__");
+        var entry = Assert.Single(entries);
+        Assert.Equal("Config warning", entry.Message);
+    }
+
+    /// <summary>
+    ///     Verifies that null source returns entries without source filtering.
+    /// </summary>
+    [Fact]
+    public void GetEntries_NullSource_DoesNotFilterBySource()
+    {
+        const string src = "__PLT_NullSrc__";
+        _sut.LogError(src, "api error");
+
+        // Null source should not filter - our entry should be present among results
+        var entries = _sut.GetEntries(source: null);
+        Assert.Contains(entries, e => e.Source == src);
+    }
+
+    /// <summary>
+    ///     Verifies that empty string source returns entries without source filtering.
+    /// </summary>
+    [Fact]
+    public void GetEntries_EmptySource_DoesNotFilterBySource()
+    {
+        const string src = "__PLT_EmptySrc__";
+        _sut.LogError(src, "api error");
+
+        var entries = _sut.GetEntries(source: string.Empty);
+        Assert.Contains(entries, e => e.Source == src);
+    }
+
+    /// <summary>
+    ///     Verifies that Clear removes all entries.
+    /// </summary>
+    [Fact]
+    public void Clear_RemovesAllEntries()
+    {
+        const string src = "__PLT_Clear__";
+        _sut.LogError(src, "Message 1");
+        _sut.LogError(src, "Message 2");
+
+        var before = _sut.GetEntries(source: src);
+        Assert.Equal(2, before.Count);
+
+        _sut.Clear();
+        Assert.Equal(0, _sut.GetCount());
+        Assert.Empty(_sut.GetEntries());
+    }
+
+    /// <summary>
+    ///     Verifies that Clear on an empty buffer does not throw.
+    /// </summary>
+    [Fact]
+    public void Clear_EmptyBuffer_DoesNotThrow()
+    {
+        var ex = Record.Exception(() => _sut.Clear());
+        Assert.Null(ex);
+    }
+
+    /// <summary>
+    ///     Verifies that the ring buffer respects MaxEntries by not exceeding the maximum count.
+    /// </summary>
+    [Fact]
+    public void RingBuffer_EvictsOldEntries_WhenMaxExceeded()
+    {
+        for (var i = 0; i < PluginLogService.MaxEntries + 100; i++) _sut.LogError("__PLT_Ring__", $"Message {i}");
+
+        Assert.True(_sut.GetCount() <= PluginLogService.MaxEntries);
+    }
+
+    /// <summary>
+    ///     Verifies that oldest entries are evicted and newest are preserved.
+    /// </summary>
+    [Fact]
+    public void RingBuffer_PreservesNewestEntries()
+    {
+        const string src = "__PLT_RingNew__";
+        for (var i = 0; i < PluginLogService.MaxEntries + 50; i++) _sut.LogError(src, $"Message {i}");
+
+        var entries = _sut.GetEntries(source: src, limit: 1);
+        var entry = Assert.Single(entries);
+
+        // The newest entry should be the last one logged
+        Assert.Equal($"Message {PluginLogService.MaxEntries + 49}", entry.Message);
+    }
+
+    /// <summary>
+    ///     Verifies that the oldest entry was evicted by the ring buffer.
+    /// </summary>
+    [Fact]
+    public void RingBuffer_EvictsOldestEntry()
+    {
+        const string src = "__PLT_RingOld__";
+        for (var i = 0; i < PluginLogService.MaxEntries + 50; i++) _sut.LogError(src, $"Message {i}");
+
+        var allEntries = _sut.GetEntries(source: src, limit: PluginLogService.MaxEntries);
+        Assert.DoesNotContain(allEntries, e => e.Message == "Message 0");
+        Assert.DoesNotContain(allEntries, e => e.Message == "Message 49");
+    }
+
+    /// <summary>
+    ///     Verifies that the entry timestamp is set to a recent UTC value.
+    /// </summary>
+    [Fact]
+    public void LogEntry_HasUtcTimestamp()
+    {
+        const string src = "__PLT_Ts__";
+        var before = DateTime.UtcNow;
+        _sut.LogError(src, "Timestamp test");
+        var after = DateTime.UtcNow;
+
+        var entry = _sut.GetEntries(source: src).First();
+        Assert.InRange(entry.Timestamp, before, after);
+    }
+
+    /// <summary>
+    ///     Verifies that ExportAsText produces valid output with correct header and content.
+    /// </summary>
+    [Fact]
+    public void ExportAsText_ProducesFormattedOutput()
+    {
+        const string src1 = "__PLT_Export1__";
+        const string src2 = "__PLT_Export2__";
+        _sut.LogError(src1, "Test error");
+        _sut.LogWarning(src2, "Test warning");
+
+        var text = _sut.ExportAsText();
+        Assert.Contains("Jellyfin Watchback Plugin Logs", text, StringComparison.Ordinal);
+        Assert.Contains("[ERROR]", text, StringComparison.Ordinal);
+        Assert.Contains("[WARN ]", text, StringComparison.Ordinal);
+        Assert.Contains(src1, text, StringComparison.Ordinal);
+        Assert.Contains(src2, text, StringComparison.Ordinal);
+        Assert.Contains("Entries:", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that ExportAsText with minLevel filter excludes lower levels.
+    /// </summary>
+    [Fact]
+    public void ExportAsText_WithMinLevel_FiltersEntries()
+    {
+        const string src = "__PLT_ExFilt__";
+        _sut.LogError(src, "Error");
+        _sut.LogWarning(src, "Warning");
+
+        var text = _sut.ExportAsText("ERROR");
+        Assert.Contains("[ERROR]", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("[WARN ]", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that ExportAsText on empty buffer produces header with zero entries.
+    /// </summary>
+    [Fact]
+    public void ExportAsText_EmptyBuffer_ProducesHeaderOnly()
+    {
+        _sut.Clear();
+        var text = _sut.ExportAsText();
+        Assert.Contains("Jellyfin Watchback Plugin Logs", text, StringComparison.Ordinal);
+        Assert.Contains("Entries: 0", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that ExportAsText includes exception details.
+    /// </summary>
+    [Fact]
+    public void ExportAsText_WithException_IncludesExceptionText()
+    {
+        const string src = "__PLT_ExExc__";
+        var ex = new InvalidOperationException("Export test exception");
+        _sut.LogError(src, "Error with exception", ex);
+
+        var text = _sut.ExportAsText();
+        Assert.Contains("Exception:", text, StringComparison.Ordinal);
+        Assert.Contains("Export test exception", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies that ExportAsText exports entries oldest-first (chronological).
+    /// </summary>
+    [Fact]
+    public void ExportAsText_ExportsOldestFirst()
+    {
+        const string src = "__PLT_ExOrd__";
+        _sut.LogError(src, "FirstMsg");
+        _sut.LogError(src, "SecondMsg");
+
+        var text = _sut.ExportAsText();
+        var firstPos = text.IndexOf("FirstMsg", StringComparison.Ordinal);
+        var secondPos = text.IndexOf("SecondMsg", StringComparison.Ordinal);
+
+        Assert.True(firstPos < secondPos, "ExportAsText should output entries oldest-first (chronological)");
+    }
+
+    /// <summary>
+    ///     Verifies that ExportAsText contains the "Exported" timestamp line.
+    /// </summary>
+    [Fact]
+    public void ExportAsText_ContainsExportedTimestamp()
+    {
+        var text = _sut.ExportAsText();
+        Assert.Contains("Exported:", text, StringComparison.Ordinal);
+        Assert.Contains("UTC", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    ///     Verifies GetLevelIndex for known and unknown levels.
+    /// </summary>
+    [Theory]
+    [InlineData("DEBUG", 0)]
+    [InlineData("INFO", 1)]
+    [InlineData("WARN", 2)]
+    [InlineData("ERROR", 3)]
+    [InlineData("debug", 0)]
+    [InlineData("info", 1)]
+    [InlineData("warn", 2)]
+    [InlineData("error", 3)]
+    [InlineData("Debug", 0)]
+    [InlineData("Info", 1)]
+    [InlineData("Warn", 2)]
+    [InlineData("Error", 3)]
+    [InlineData("UNKNOWN", 1)]
+    [InlineData("", 1)]
+    [InlineData("TRACE", 1)]
+    public void GetLevelIndex_ReturnsCorrectIndex(string level, int expectedIndex)
+    {
+        Assert.Equal(expectedIndex, PluginLogService.GetLevelIndex(level));
+    }
+
+    /// <summary>
+    ///     Verifies that logging with empty source does not throw.
+    /// </summary>
+    [Fact]
+    public void LogError_EmptySource_DoesNotThrow()
+    {
+        var ex = Record.Exception(() => _sut.LogError(string.Empty, "msg"));
+        Assert.Null(ex);
+    }
+
+    /// <summary>
+    ///     Verifies that logging with empty message does not throw.
+    /// </summary>
+    [Fact]
+    public void LogError_EmptyMessage_DoesNotThrow()
+    {
+        var ex = Record.Exception(() => _sut.LogError("__PLT__", string.Empty));
+        Assert.Null(ex);
+    }
+
+    /// <summary>
+    ///     Verifies that multiple rapid log calls don't lose entries.
+    /// </summary>
+    [Fact]
+    public void MultipleRapidLogCalls_AllEntriesStored()
+    {
+        const string src = "__PLT_Rapid__";
+        for (var i = 0; i < 100; i++) _sut.LogError(src, $"Msg {i}");
+
+        var entries = _sut.GetEntries(source: src, limit: 500);
+        Assert.Equal(100, entries.Count);
+    }
+
+    /// <summary>
+    ///     Verifies that GetEntries returns a read-only collection (snapshot).
+    /// </summary>
+    [Fact]
+    public void GetEntries_ReturnsReadOnlySnapshot()
+    {
+        const string src = "__PLT_Snap__";
+        _sut.LogError(src, "Before");
+        var snapshot = _sut.GetEntries(source: src);
+
+        // Add more after taking snapshot
+        _sut.LogError(src, "After");
+
+        // Original snapshot should still have only 1 entry
+        var entry = Assert.Single(snapshot);
+        Assert.Equal("Before", entry.Message);
+
+        // New query should have 2
+        Assert.Equal(2, _sut.GetEntries(source: src).Count);
+    }
+
+    /// <summary>
+    ///     Verifies that changing the log level at runtime takes effect immediately without restart.
+    /// </summary>
+    [Fact]
+    public void LogLevel_ChangeMidFlight_TakesEffectImmediately()
+    {
+        const string src = "__PLT_MidFlight__";
+
+        // Phase 1: Start with ERROR level - only errors stored
+        _sut.TestMinLevelOverride = "ERROR";
+        _sut.LogDebug(src, "debug-phase1");
+        _sut.LogInfo(src, "info-phase1");
+        _sut.LogWarning(src, "warn-phase1");
+        _sut.LogError(src, "error-phase1");
+
+        var phase1 = _sut.GetEntries(source: src);
+        var phaseOneEntry = Assert.Single(phase1);
+        Assert.Equal("error-phase1", phaseOneEntry.Message);
+
+        // Phase 2: User changes level to DEBUG - all levels now stored
+        _sut.TestMinLevelOverride = "DEBUG";
+        _sut.LogDebug(src, "debug-phase2");
+        _sut.LogInfo(src, "info-phase2");
+
+        var phase2 = _sut.GetEntries(source: src);
+        Assert.Equal(3, phase2.Count); // error-phase1 + debug-phase2 + info-phase2
+        Assert.Contains(phase2, e => e.Message == "debug-phase2");
+        Assert.Contains(phase2, e => e.Message == "info-phase2");
+
+        // Phase 3: User changes level to WARN - debug/info no longer stored
+        _sut.TestMinLevelOverride = "WARN";
+        _sut.LogDebug(src, "debug-phase3");
+        _sut.LogInfo(src, "info-phase3");
+        _sut.LogWarning(src, "warn-phase3");
+
+        var phase3 = _sut.GetEntries(source: src);
+        Assert.Equal(4, phase3.Count); // 3 from before + warn-phase3
+        Assert.DoesNotContain(phase3, e => e.Message == "debug-phase3");
+        Assert.DoesNotContain(phase3, e => e.Message == "info-phase3");
+        Assert.Contains(phase3, e => e.Message == "warn-phase3");
+    }
+
+    /// <summary>
+    ///     Verifies that lowering the log level from ERROR to DEBUG immediately
+    ///     allows debug entries to be stored.
+    /// </summary>
+    [Fact]
+    public void LogLevel_LowerFromErrorToDebug_DebugNowStored()
+    {
+        const string src = "__PLT_Lower__";
+
+        // Start restrictive
+        _sut.TestMinLevelOverride = "ERROR";
+        _sut.LogDebug(src, "invisible");
+        Assert.Empty(_sut.GetEntries(source: src));
+
+        // Lower level - same call now succeeds
+        _sut.TestMinLevelOverride = "DEBUG";
+        _sut.LogDebug(src, "visible");
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("visible", entry.Message);
+    }
+
+    /// <summary>
+    ///     Verifies that raising the log level from DEBUG to ERROR immediately
+    ///     prevents debug/info/warn from being stored.
+    /// </summary>
+    [Fact]
+    public void LogLevel_RaiseFromDebugToError_LowerLevelsBlocked()
+    {
+        const string src = "__PLT_Raise__";
+
+        // Start permissive
+        _sut.TestMinLevelOverride = "DEBUG";
+        _sut.LogDebug(src, "stored");
+        Assert.Single(_sut.GetEntries(source: src));
+
+        // Raise level - lower levels now blocked
+        _sut.TestMinLevelOverride = "ERROR";
+        _sut.LogDebug(src, "blocked-debug");
+        _sut.LogInfo(src, "blocked-info");
+        _sut.LogWarning(src, "blocked-warn");
+
+        var entries = _sut.GetEntries(source: src);
+        var storedEntry = Assert.Single(entries); // only the original "stored"
+        Assert.Equal("stored", storedEntry.Message);
+    }
+
+    /// <summary>
+    ///     Verifies that the constructor throws ArgumentNullException when null is passed for IPluginConfigurationService.
+    /// </summary>
+    [Fact]
+    public void Constructor_NullConfigService_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() => new PluginLogService(null!));
+    }
+
+    /// <summary>
+    ///     Verifies that PluginLogService reads the configured log level from IPluginConfigurationService when no test override is set.
+    /// </summary>
+    [Fact]
+    public void GetConfiguredMinLevel_ReadsFromConfigService_WhenNoOverride()
+    {
+        var config = new PluginConfiguration { PluginLogLevel = "WARN" };
+        var sut = TestMockFactory.CreatePluginLogService(config);
+        sut.TestMinLevelOverride = null; // no override - use config service
+
+        Assert.Equal("WARN", sut.GetConfiguredMinLevel());
+    }
+
+    /// <summary>
+    ///     Verifies that CreatePluginLogService with a custom configuration correctly wires the log level through IPluginConfigurationService.
+    /// </summary>
+    [Fact]
+    public void CreatePluginLogService_WithCustomConfig_RespectsLogLevel()
+    {
+        const string src = "__PLT_CustomCfg__";
+        var config = new PluginConfiguration { PluginLogLevel = "ERROR" };
+        var sut = TestMockFactory.CreatePluginLogService(config);
+        sut.TestMinLevelOverride = null; // rely on config service
+
+        sut.LogDebug(src, "should-be-filtered");
+        sut.LogInfo(src, "should-be-filtered");
+        sut.LogWarning(src, "should-be-filtered");
+        sut.LogError(src, "should-be-stored");
+
+        var entries = sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("ERROR", entry.Level);
+    }
+
+    /// <summary>
+    ///     Verifies that CreatePluginLogService with default config uses "INFO" as the default log level (matching PluginConfiguration default).
+    /// </summary>
+    [Fact]
+    public void CreatePluginLogService_DefaultConfig_UsesInfoLevel()
+    {
+        const string src = "__PLT_DefCfg__";
+        var sut = TestMockFactory.CreatePluginLogService();
+        sut.TestMinLevelOverride = null; // rely on config service
+
+        sut.LogDebug(src, "should-be-filtered");
+        sut.LogInfo(src, "should-be-stored");
+
+        var entries = sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.Equal("INFO", entry.Level);
+    }
+
+    [Fact]
+    public void LogWarning_ExceptionWithCrLf_SanitizesExceptionString()
+    {
+        const string src = "__PLT_ExSanitize__";
+        var ex = new Exception("line1\r\nline2\nline3");
+
+        _sut.LogWarning(src, "msg", ex);
+
+        var entries = _sut.GetEntries(source: src);
+        var entry = Assert.Single(entries);
+        Assert.NotNull(entry.Exception);
+        var exStr = entry.Exception!;
+        Assert.DoesNotContain('\n', exStr);
+        Assert.DoesNotContain('\r', exStr);
+        Assert.Contains("line1", exStr, StringComparison.Ordinal);
+        Assert.Contains("line2", exStr, StringComparison.Ordinal);
+        Assert.Contains("line3", exStr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GetConfiguredMinLevel_WhenConfigServiceThrows_ReturnsInfoDefault()
+    {
+        // BUG GUARD: bare `catch {}` previously swallowed all exceptions silently.
+        // This test verifies the fallback to "INFO" when the config service is unavailable.
+        var throwingConfig = new Mock<IPluginConfigurationService>();
+        throwingConfig.Setup(s => s.GetConfiguration()).Throws(new InvalidOperationException("not ready"));
+        var sut = new PluginLogService(throwingConfig.Object);
+
+        var level = sut.GetConfiguredMinLevel();
+
+        Assert.Equal("INFO", level);
+    }
+
+    [Fact]
+    public void GetConfiguredMinLevel_WhenConfigReturnsDebug_ReturnsDebug()
+    {
+        var cfg = new PluginConfiguration { PluginLogLevel = "DEBUG" };
+        var sut = TestMockFactory.CreatePluginLogService(cfg);
+        sut.TestMinLevelOverride = null;
+
+        var level = sut.GetConfiguredMinLevel();
+
+        Assert.Equal("DEBUG", level);
+    }
+}

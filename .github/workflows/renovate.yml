@@ -1,0 +1,171 @@
+name: Renovate
+
+on:
+  schedule:
+    - cron: '42 3 * * *'
+
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Renovate log level'
+        required: false
+        default: 'info'
+        type: choice
+        options:
+          - info
+          - debug
+          - trace
+      dryRun:
+        description: 'Dry run (analyse only, create no branches/PRs/issues)'
+        required: false
+        default: false
+        type: boolean
+      ignoreSchedules:
+        description: 'Ignore all schedules in renovate.json5 (e.g. force lock file maintenance)'
+        required: false
+        default: false
+        type: boolean
+
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/renovate.json5'
+      - '.github/workflows/renovate.yml'
+
+  pull_request:
+    paths:
+      - '.github/renovate.json5'
+      - '.github/workflows/renovate.yml'
+
+permissions: {}
+
+jobs:
+  validate-config:
+    name: Validate Renovate config
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate .github/renovate.json5
+        uses: suzuki-shunsuke/github-action-renovate-config-validator@1e1604219a6b38ae9a10aff42a28a3656322c31a # v2.4.1
+        with:
+          strict: "true"
+
+  preflight:
+    name: Check credentials
+    runs-on: ubuntu-latest
+    needs: validate-config
+    if: github.event_name != 'pull_request'
+    permissions: {}
+    timeout-minutes: 5
+    outputs:
+      has-credentials: ${{ steps.check.outputs.has-credentials }}
+
+    steps:
+      - name: Check for a Renovate token
+        id: check
+        env:
+          APP_ID: ${{ vars.RENOVATE_APP_CLIENT_ID || vars.RENOVATE_APP_ID }}
+          PAT: ${{ secrets.RENOVATE_TOKEN }}
+        run: |
+          if [ -n "$APP_ID" ] || [ -n "$PAT" ]; then
+            echo "has-credentials=true" >> "$GITHUB_OUTPUT"
+            echo "Renovate credentials found." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "has-credentials=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::Renovate is installed but has no credentials yet - the bot was skipped."
+
+  renovate:
+    name: Run Renovate
+    runs-on: ubuntu-latest
+    needs: [validate-config, preflight]
+    if: needs.preflight.outputs.has-credentials == 'true'
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    concurrency:
+      group: renovate-bot
+      cancel-in-progress: false
+    env:
+      HAS_PRIVATE_KEY: ${{ secrets.RENOVATE_APP_PRIVATE_KEY != '' && 'true' || 'false' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Mint GitHub App token
+        id: app-token
+        if: (vars.RENOVATE_APP_CLIENT_ID != '' || vars.RENOVATE_APP_ID != '') && env.HAS_PRIVATE_KEY == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID || vars.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+          permission-workflows: write
+          permission-statuses: write
+          permission-checks: read
+          permission-vulnerability-alerts: read
+
+      - name: Resolve bot identity
+        id: bot
+        if: steps.app-token.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          user_id="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          echo "git-author=${APP_SLUG}[bot] <${user_id}+${APP_SLUG}[bot]@users.noreply.github.com>" >> "$GITHUB_OUTPUT"
+
+      - name: Enable dry run
+        if: inputs.dryRun
+        run: echo "RENOVATE_DRY_RUN=full" >> "$GITHUB_ENV"
+
+      - name: Ignore schedules
+        if: inputs.ignoreSchedules
+        run: |
+          {
+            echo "RENOVATE_FORCE={\"schedule\":null}"
+          } >> "$GITHUB_ENV"
+
+      - name: Renovate
+        uses: renovatebot/github-action@acdd6bda8b035c99ce59d5675816af2aa65a1774 # v46.3.14
+        with:
+          token: ${{ steps.app-token.outputs.token || secrets.RENOVATE_TOKEN }}
+        env:
+          RENOVATE_PLATFORM: github
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          RENOVATE_ONBOARDING: 'false'
+          RENOVATE_REQUIRE_CONFIG: 'required'
+          RENOVATE_GIT_AUTHOR: ${{ steps.bot.outputs.git-author || 'Renovate Bot <bot@renovate.local>' }}
+          RENOVATE_BINARY_SOURCE: install
+          LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
+          RENOVATE_DOCKER_MAX_PAGES: "10"
+          RENOVATE_HOST_RULES: '[{"matchHost": "hub.docker.com", "hostType": "docker", "username": ${{ toJSON(secrets.DOCKER_HUB_USERNAME) }}, "password": ${{ toJSON(secrets.DOCKER_HUB_PASSWORD) }}}, {"matchHost": "index.docker.io", "hostType": "docker", "username": ${{ toJSON(secrets.DOCKER_HUB_USERNAME) }}, "password": ${{ toJSON(secrets.DOCKER_HUB_PASSWORD) }}}]'
+
+      - name: Summary
+        if: always()
+        env:
+          MODE: ${{ inputs.dryRun && 'dry run (no PRs created)' || 'live' }}
+          TRIGGER: ${{ github.event_name }}
+        run: |
+          {
+            echo "## Renovate"
+            echo ""
+            echo "- Trigger: \`$TRIGGER\`"
+            echo "- Mode: $MODE"
+            echo "- Config: \`.github/renovate.json5\`"
+          } >> "$GITHUB_STEP_SUMMARY"

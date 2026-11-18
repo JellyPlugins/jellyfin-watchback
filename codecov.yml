@@ -1,0 +1,52 @@
+# Codecov configuration. Without this file Codecov uses `target: auto`, which pins the patch requirement to the project's current (very high) coverage.
+
+codecov:
+  require_ci_to_pass: true
+  notify:
+    after_n_builds: 3
+    wait_for_ci: true
+
+# Flags are scoped to disjoint file sets, so a flag's percentage is measured
+# against its own code instead of every file known to the commit. `frontend`
+# also carries forward the last real value when a commit ships no UI upload.
+flags:
+  backend:
+    paths:
+      - "Jellyfin.Plugin.Watchback/*.cs"
+      - "Jellyfin.Plugin.Watchback/**/*.cs"
+  frontend:
+    paths:
+      - "Jellyfin.Plugin.Watchback/PluginPages/js/"
+      - "Jellyfin.Plugin.Watchback/js/"
+    carryforward: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "85...100"
+
+  status:
+    project:
+      default:
+        target: 90%
+        threshold: 1%
+        if_ci_failed: error
+    patch:
+      default:
+        target: 85%
+        threshold: 1%
+        if_ci_failed: error
+
+# Keep PR comment concise; show project + patch deltas.
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
+
+# Coverage instrumentation counts test code and generated/build assets as "uncovered", which drags the number down and makes the patch target meaningless for PRs that only touch those.
+ignore:
+  - "Jellyfin.Plugin.Watchback.Tests/**"
+  - "BuildTasks/**"
+  - "test/e2e/**"
+  - "docs/**"
+  - "**/PluginPages/configPage.html"

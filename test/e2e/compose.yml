@@ -1,0 +1,22 @@
+# Real Jellyfin with the Watchback plugin.
+name: jellyfin-watchback-e2e
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:12.4
+    container_name: jfw-e2e-jellyfin
+    user: "${JELLYFIN_UID:-0}:${JELLYFIN_GID:-0}"
+    ports:
+      - "127.0.0.1:${JELLYFIN_PORT:-8098}:8096"
+    environment:
+      TZ: UTC
+      JELLYFIN_PublishedServerUrl: "http://localhost:${JELLYFIN_PORT:-8098}"
+    volumes:
+      - ./runtime/config:/config
+      - ./runtime/cache:/cache
+      - ./runtime/media:/media
+    healthcheck:
+      test: [CMD-SHELL, "curl -fsS http://localhost:8096/health | grep -q Healthy"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s

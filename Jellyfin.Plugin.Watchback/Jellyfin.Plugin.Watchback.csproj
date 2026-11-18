@@ -1,0 +1,150 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <AssemblyName>Jellyfin.Plugin.Watchback</AssemblyName>
+        <RootNamespace>Jellyfin.Plugin.Watchback</RootNamespace>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <AnalysisMode>AllEnabledByDefault</AnalysisMode>
+        <CodeAnalysisRuleSet>../jellyfin.ruleset</CodeAnalysisRuleSet>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+            <_Parameter1>Jellyfin.Plugin.Watchback.Tests</_Parameter1>
+        </AssemblyAttribute>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Jellyfin.Controller" Version="[12.4.0]">
+            <ExcludeAssets>runtime</ExcludeAssets>
+        </PackageReference>
+        <PackageReference Include="Jellyfin.Model" Version="[12.4.0]">
+            <ExcludeAssets>runtime</ExcludeAssets>
+        </PackageReference>
+
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Remove="BuildTasks/ComposeConfigPage.cs"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="SerilogAnalyzer" Version="[0.15.0]" PrivateAssets="All"/>
+        <PackageReference Include="StyleCop.Analyzers" Version="[1.3.180]" PrivateAssets="All"/>
+        <PackageReference Include="SmartAnalyzers.MultithreadingAnalyzer" Version="[1.1.31]" PrivateAssets="All"/>
+    </ItemGroup>
+
+    <!-- Compose configPage.html from template + multiple CSS + multiple JS files at build time -->
+    <UsingTask TaskName="Jellyfin.Plugin.Watchback.BuildTasks.ComposeConfigPage" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+        <Task>
+            <Code Type="Class" Language="cs" Source="BuildTasks/ComposeConfigPage.cs"/>
+        </Task>
+    </UsingTask>
+
+    <!-- Define CSS and JS module files in concatenation order -->
+    <ItemGroup>
+        <CssModule Include="PluginPages\css\Shared.css"/>
+        <CssModule Include="PluginPages\css\Settings.css"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <JsModule Include="PluginPages\js\Shared.js"/>
+        <JsModule Include="PluginPages\js\UiPrimitives.js"/>
+        <JsModule Include="PluginPages\js\Settings.js"/>
+        <JsModule Include="PluginPages\js\Main.js"/>
+    </ItemGroup>
+
+    <Target Name="ComposeConfigPageHtml"
+            BeforeTargets="BeforeBuild;BeforeRebuild"
+            Condition="'$(DesignTimeBuild)' != 'true'"
+            Inputs="$(MSBuildProjectFullPath);$(MSBuildProjectDirectory)\PluginPages\configPage.template.html;@(CssModule->'$(MSBuildProjectDirectory)\%(Identity)');@(JsModule->'$(MSBuildProjectDirectory)\%(Identity)');$(MSBuildProjectDirectory)\BuildTasks\ComposeConfigPage.cs"
+            Outputs="$(MSBuildProjectDirectory)\PluginPages\configPage.html">
+        <Jellyfin.Plugin.Watchback.BuildTasks.ComposeConfigPage
+                TemplateFile="$(MSBuildProjectDirectory)\PluginPages\configPage.template.html"
+                CssFiles="@(CssModule->'$(MSBuildProjectDirectory)\%(Identity)', ';')"
+                JsFiles="@(JsModule->'$(MSBuildProjectDirectory)\%(Identity)', ';')"
+                OutputFile="$(MSBuildProjectDirectory)\PluginPages\configPage.html"/>
+    </Target>
+
+  <!-- Sync CSS, JS, and i18n files to docs/ for GitHub Pages demo (set SyncDocs=true to enable) -->
+  <Target Name="SyncDocsAssets" AfterTargets="ComposeConfigPageHtml" Condition="'$(SyncDocs)' == 'true'">
+    <PropertyGroup>
+      <DocsRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\docs'))</DocsRoot>
+    </PropertyGroup>
+
+        <!-- Collect source files -->
+        <ItemGroup>
+            <DocsCssSource Include="$(MSBuildProjectDirectory)\PluginPages\css\*.css"/>
+            <DocsJsSource Include="$(MSBuildProjectDirectory)\PluginPages\js\*.js"/>
+            <DocsJsSource Include="$(MSBuildProjectDirectory)\js\native-tabs.js"/>
+            <DocsJsSource Include="$(MSBuildProjectDirectory)\js\yearly-rewind.js"/>
+            <DocsJsSource Include="$(MSBuildProjectDirectory)\..\docs\mock\mock-data.js"/>
+            <DocsI18nSource Include="$(MSBuildProjectDirectory)\i18n\*.json"/>
+        </ItemGroup>
+
+        <!--
+          Sync must be crash-safe: an interruption cannot be allowed to leave docs/css, docs/js,
+          or docs/i18n emptied. So we stage the fresh assets into temporary sibling directories
+          FIRST, and only once every copy has fully succeeded do we perform the destructive swap.
+          The RemoveDir of the live directory happens immediately before the Move of its staged
+          replacement, keeping the window where docs/ is missing as small as MSBuild allows. If the
+          build is interrupted at any point during staging, the existing docs/ is still fully intact.
+        -->
+
+        <!-- Start from clean staging dirs in case a previous interrupted run left them behind -->
+        <RemoveDir Directories="$(DocsRoot)\css.tmp" Condition="Exists('$(DocsRoot)\css.tmp')"/>
+        <RemoveDir Directories="$(DocsRoot)\js.tmp" Condition="Exists('$(DocsRoot)\js.tmp')"/>
+        <RemoveDir Directories="$(DocsRoot)\i18n.tmp" Condition="Exists('$(DocsRoot)\i18n.tmp')"/>
+
+        <MakeDir Directories="$(DocsRoot)\css.tmp"/>
+        <MakeDir Directories="$(DocsRoot)\js.tmp"/>
+        <MakeDir Directories="$(DocsRoot)\i18n.tmp"/>
+
+        <!-- Stage fresh content into the temp dirs (non-destructive to the live docs/) -->
+        <Copy SourceFiles="@(DocsCssSource)" DestinationFolder="$(DocsRoot)\css.tmp"/>
+        <Copy SourceFiles="@(DocsJsSource)" DestinationFolder="$(DocsRoot)\js.tmp"/>
+        <Copy SourceFiles="@(DocsI18nSource)" DestinationFolder="$(DocsRoot)\i18n.tmp"/>
+
+        <!-- Swap staged content into place: remove the live dir then move the staged one in.
+             This is the only destructive step and runs after staging is proven to have succeeded. -->
+        <RemoveDir Directories="$(DocsRoot)\css" Condition="Exists('$(DocsRoot)\css')"/>
+        <Move SourceFiles="@(DocsCssSource->'$(DocsRoot)\css.tmp\%(Filename)%(Extension)')" DestinationFolder="$(DocsRoot)\css"/>
+
+        <RemoveDir Directories="$(DocsRoot)\js" Condition="Exists('$(DocsRoot)\js')"/>
+        <Move SourceFiles="@(DocsJsSource->'$(DocsRoot)\js.tmp\%(Filename)%(Extension)')" DestinationFolder="$(DocsRoot)\js"/>
+
+        <RemoveDir Directories="$(DocsRoot)\i18n" Condition="Exists('$(DocsRoot)\i18n')"/>
+        <Move SourceFiles="@(DocsI18nSource->'$(DocsRoot)\i18n.tmp\%(Filename)%(Extension)')" DestinationFolder="$(DocsRoot)\i18n"/>
+
+        <!-- Remove now-empty staging dirs -->
+        <RemoveDir Directories="$(DocsRoot)\css.tmp" Condition="Exists('$(DocsRoot)\css.tmp')"/>
+        <RemoveDir Directories="$(DocsRoot)\js.tmp" Condition="Exists('$(DocsRoot)\js.tmp')"/>
+        <RemoveDir Directories="$(DocsRoot)\i18n.tmp" Condition="Exists('$(DocsRoot)\i18n.tmp')"/>
+
+        <Message Importance="High" Text="Synced CSS, JS, and i18n files to docs/ for GitHub Pages demo"/>
+    </Target>
+
+    <ItemGroup>
+        <!-- i18n language files as embedded resources -->
+        <EmbeddedResource Include="i18n\*.json"/>
+        <!-- The generated configPage.html is the embedded resource -->
+        <EmbeddedResource Include="PluginPages\configPage.html"/>
+        <EmbeddedResource Include="js\native-tabs.js">
+            <LogicalName>Jellyfin.Plugin.Watchback.js.native-tabs.js</LogicalName>
+        </EmbeddedResource>
+        <EmbeddedResource Include="js\client-lifecycle.js">
+            <LogicalName>Jellyfin.Plugin.Watchback.js.client-lifecycle.js</LogicalName>
+        </EmbeddedResource>
+        <EmbeddedResource Include="PluginPages\js\UiPrimitives.js">
+            <LogicalName>Jellyfin.Plugin.Watchback.js.ui-primitives.js</LogicalName>
+        </EmbeddedResource>
+        <EmbeddedResource Include="js\yearly-rewind.js">
+            <LogicalName>Jellyfin.Plugin.Watchback.js.yearly-rewind.js</LogicalName>
+        </EmbeddedResource>
+        <!-- Source module files are NOT embedded but kept for development -->
+        <None Include="PluginPages\configPage.template.html"/>
+        <None Include="PluginPages\css\*.css"/>
+        <None Include="PluginPages\js\*.js"/>
+    </ItemGroup>
+
+</Project>

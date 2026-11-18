@@ -1,0 +1,89 @@
+name: E2E (Docker)
+
+# Full end-to-end tests: real Jellyfin 12 container, plugin mounted in, wizard automated, every endpoint / task mode / UI tab exercised.
+
+on:
+  pull_request:
+  push:
+    # Mirror pr.yml's coverage-on-main behaviour for the e2e side: Codecov reports the DEFAULT-branch results, so main must run e2e itself for the e2e Test-Analytics report (uploaded below) to reflect main - otherwise it only ever sees PR-branch runs.
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job never pushes back to the repo, so don't leave the GITHUB_TOKEN
+          # in the local git config for the rest of the job (zizmor: artipacked).
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # Single source of truth for every job + local dev (nvm/fnm read it too).
+          # Renovate's `nvm` manager keeps it on the current Node.
+          node-version-file: .nvmrc
+
+      # Docker + Compose are preinstalled on ubuntu-latest runners.
+      - name: Show Docker versions
+        run: docker --version && docker compose version
+
+      - name: Run E2E suite
+        run: bash test/e2e/scripts/run.sh
+        env:
+          CI: "true"
+          # In CI the non-admin fixture MUST provision - a missing one fails the
+          # run instead of silently skipping the authorization / user-facing tests.
+          E2E_REQUIRE_NORMAL_USER: "1"
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-playwright-report
+          path: test/e2e/playwright-report/
+          retention-days: 7
+
+      # Codecov Test Analytics (NOT coverage): uploads the Playwright JUnit results so the Codecov UI surfaces e2e failures + flaky-test detection on the PR.
+      - name: Upload E2E test results to Codecov
+        if: always()
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
+          files: test/e2e/test-results/junit.xml
+          flags: e2e
+          disable_search: true
+
+      - name: Upload traces & screenshots
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-traces
+          path: test/e2e/test-results/
+          retention-days: 7
+
+      - name: Dump Jellyfin server log on failure
+        if: failure()
+        run: |
+          echo "::group::Jellyfin container log"
+          docker logs jfw-e2e-jellyfin 2>&1 | tail -300 || true
+          echo "::endgroup::"

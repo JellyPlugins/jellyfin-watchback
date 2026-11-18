@@ -1,0 +1,20 @@
+[
+  {
+    "guid": "16f5f0be-353b-48c4-a5f1-d41d9b08b264",
+    "name": "jellyfin-watchback",
+    "description": "Personal annual Jellyfin playback rewinds with measured activity, conservative reconstruction, localized charts and seasonal visibility.",
+    "overview": "Your personal annual Jellyfin playback rewind.",
+    "owner": "JellyPlugins",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.0.0.0",
+        "changelog": "Initial Watchback version with personal annual rewinds and continuous activity recording.",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "",
+        "checksum": "",
+        "timestamp": ""
+      }
+    ]
+  }
+]

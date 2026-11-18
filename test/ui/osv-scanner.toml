@@ -1,0 +1,6 @@
+# Applies only to lockfiles in test/ui; keep the repository-wide scan enabled.
+# Remove when picomatch publishes a patched release and the lockfile is updated.
+[[IgnoredVulns]]
+id = "GHSA-fc5q-39xc-vjpf"
+effectiveUntil = 2026-12-18
+reason = "Temporary exception: picomatch <=4.0.7 has no patched release. It is used only by Vitest/Vite and test file discovery with repository-controlled globs, never with runtime user input, and is not shipped in the plugin. PR tests already execute repository-controlled JavaScript. Track https://github.com/advisories/GHSA-fc5q-39xc-vjpf and remove this exception after upgrading to a patched version."
