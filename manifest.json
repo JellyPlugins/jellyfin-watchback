@@ -11,9 +11,9 @@
         "version": "1.0.0.0",
         "changelog": "Initial Watchback version with personal annual rewinds and continuous activity recording.",
         "targetAbi": "12.4.0.0",
-        "sourceUrl": "",
-        "checksum": "",
-        "timestamp": ""
+        "sourceUrl": "https://github.com/JellyPlugins/jellyfin-watchback/releases/download/1.0.0.0/Watchback_1.0.0.0.zip",
+        "checksum": "f2472092999f13ed9ad38684d6fbd280",
+        "timestamp": "2026-11-18T14:05:44Z"
       }
     ]
   }
