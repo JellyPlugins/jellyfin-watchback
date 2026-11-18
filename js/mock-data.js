@@ -31,7 +31,6 @@ var MOCK_YEARLY_REWIND=(function(){
             ActiveSeconds:65*3600,EstimatedSeconds:0,ReconstructedItemCount:0,MovieCount:14,EpisodeCount:48,SeriesCount:3,ActiveDays:72,Genres:['Drama','Comedy','Adventure'],TopGenre:'Drama'}};
 })();
 
-var MOCK_CONFIG = {YearlyRewindEnabled:true,YearlyRewindStartDate:'12-15',YearlyRewindEndDate:'01-15'};
 var demoLanguage = new URLSearchParams(location.search).get('lang') || 'de';
 document.documentElement.lang = demoLanguage;
 window.ApiClient = {
@@ -44,23 +43,12 @@ window.ApiClient = {
       var language = new URL(options.url, location.href).searchParams.get('lang') || demoLanguage;
       return fetch('i18n/' + language + '.json').then(function (response) { if (!response.ok) throw new Error('Unsupported demo language'); return response.json(); });
     }
-    if (options.url.includes('Configuration')) {
-      if (options.type === 'PUT') Object.assign(MOCK_CONFIG, JSON.parse(options.data));
-      return Promise.resolve({...MOCK_CONFIG});
-    }
-    if (options.url.includes('/Status')) return Promise.resolve({Enabled:MOCK_CONFIG.YearlyRewindEnabled,TabVisible:MOCK_CONFIG.YearlyRewindEnabled,Available:true,SnapshotId:MOCK_YEARLY_REWIND.SnapshotId,SnapshotAtUtc:MOCK_YEARLY_REWIND.SnapshotAtUtc,TimeZoneId:'UTC'});
+    if (options.url.includes('/Status')) return Promise.resolve({Enabled:true,TabVisible:true,Available:true,SnapshotId:MOCK_YEARLY_REWIND.SnapshotId,SnapshotAtUtc:MOCK_YEARLY_REWIND.SnapshotAtUtc,TimeZoneId:'UTC'});
     return Promise.resolve(structuredClone(MOCK_YEARLY_REWIND));
   }
 };
 window.WatchbackTabs = {
-  register: function (_id, title, mount) { var button=document.getElementById('demoRewind');button.hidden=false;button.title=title;mount(document.getElementById('demoReport')); },
-  unregister: function () { document.getElementById('demoRewind').hidden=true;document.getElementById('demoReport').replaceChildren(); },
-  updateTitle: function (_id, title) { document.getElementById('demoRewind').title=title; }
+  register: function (_id, title, mount) { var report=document.getElementById('demoReport');report.setAttribute('aria-label',title);mount(report); },
+  unregister: function () { document.getElementById('demoReport').replaceChildren(); },
+  updateTitle: function (_id, title) { document.getElementById('demoReport').setAttribute('aria-label',title); }
 };
-document.querySelectorAll('[data-demo-view]').forEach(function (button) {
-  button.addEventListener('click', function () {
-    document.querySelectorAll('[data-demo-view]').forEach(function (item) {item.setAttribute('aria-pressed', String(item===button));});
-    document.getElementById('demoSettings').hidden=button.dataset.demoView!=='settings';
-    document.getElementById('demoReport').hidden=button.dataset.demoView!=='rewind';
-  });
-});
