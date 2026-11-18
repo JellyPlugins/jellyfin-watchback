@@ -244,6 +244,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 _logger.LogInformation("Imported or updated {Count} historical Playback Reporting entries.", imported);
             }
 
+            var saveFailed = false;
             foreach (var user in pending)
             {
                 var history = History(user.Id);
@@ -255,16 +256,17 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                     _store.Save(user.Id, history);
                     _dirty.Remove(user.Id);
                 }
-                catch
+                catch (Exception ex) when (!ex.IsFatal())
                 {
                     history.PlaybackReportingImportCompleted = false;
                     _coverage.Remove(user.Id);
                     _dirty.Add(user.Id);
-                    throw;
+                    saveFailed = true;
+                    _logger.LogWarning(ex, "Could not persist the initial Playback Reporting import for user {UserId}; retrying in one minute.", user.Id);
                 }
             }
 
-            _nextReportingRefresh = default;
+            _nextReportingRefresh = saveFailed ? now.AddMinutes(1) : default;
         }
         catch (Exception ex) when (!ex.IsFatal())
         {

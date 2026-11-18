@@ -698,12 +698,14 @@ public sealed class PlaybackReportingImportTests : IDisposable
     {
         using var db = Database();
         Insert(db);
+        var healthy = new User("healthy", "default", "default") { Id = Guid.NewGuid() };
+        Insert(db, user: healthy.Id);
         var configuration = new Mock<IPluginConfigurationService>();
         configuration.SetupGet(value => value.IsInitialized).Returns(true);
         configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration { YearlyRewindEnabled = true });
         var user = new User("test", "default", "default") { Id = _userId };
         var users = new Mock<IUserManager>();
-        users.Setup(value => value.GetUsers()).Returns([user]);
+        users.Setup(value => value.GetUsers()).Returns([user, healthy]);
         var insights = new Mock<IUserActivityInsightsService>();
         insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
         var journal = Path.Join(_directory, "jellyfin-watchback", "activity-history", _userId.ToString("N") + ".json");
@@ -717,16 +719,23 @@ public sealed class PlaybackReportingImportTests : IDisposable
         service.Tick(_localCutoff);
         Assert.Null(consumer.Load(_userId));
         Assert.False(File.Exists(journal));
+        var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
+        Assert.True(store.Load(healthy.Id).PlaybackReportingImportCompleted);
+        Assert.Single(store.Load(healthy.Id).ImportedPlayback);
+        var healthyReport = consumer.Load(healthy.Id)!;
+        Assert.Equal(1, healthyReport.PlaybackReportingPlayCount);
+        service.Tick(_localCutoff.AddSeconds(10));
+        Assert.Equal(healthyReport.SnapshotId, consumer.Load(healthy.Id)!.SnapshotId);
         blockWrites = false;
         Directory.Delete(journal);
         service.Tick(_localCutoff.AddSeconds(30));
         _plugins.VerifyGet(value => value.Plugins, Times.Once);
-        var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
         Assert.False(store.Load(_userId).PlaybackReportingImportCompleted);
         service.Tick(_localCutoff.AddMinutes(1));
         Assert.True(store.Load(_userId).PlaybackReportingImportCompleted);
         Assert.Single(store.Load(_userId).ImportedPlayback);
         Assert.Equal(1, consumer.Load(_userId)!.PlaybackReportingPlayCount);
+        Assert.Equal(healthyReport.SnapshotId, consumer.Load(healthy.Id)!.SnapshotId);
         _plugins.VerifyGet(value => value.Plugins, Times.Exactly(2));
     }
 
