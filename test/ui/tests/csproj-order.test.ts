@@ -78,3 +78,25 @@ describe('Vitest MSBuild integration', () => {
     expect([null, 'false', 'ErrorAndStop']).toContain(exec.getAttribute('ContinueOnError'));
   });
 });
+
+
+describe('demo language selection', () => {
+  test.each([
+    {languages: ['de-DE'], language: 'de-DE', search: '', expected: 'de'},
+    {languages: ['fr-CA', 'en-US'], language: 'fr-CA', search: '', expected: 'fr'},
+    {languages: ['nl-NL', 'sv-SE'], language: 'nl-NL', search: '', expected: 'sv'},
+    {languages: ['zh-Hant-TW'], language: 'zh-Hant-TW', search: '', expected: 'zh'},
+    {languages: ['nl-NL'], language: 'nl-NL', search: '', expected: 'en'},
+    {languages: [], language: '', search: '', expected: 'en'},
+    {languages: [], language: 'pt-BR', search: '', expected: 'pt'},
+    {languages: ['de-DE'], language: 'de-DE', search: '?lang=en', expected: 'en'},
+    {languages: ['en-US'], language: 'en-US', search: '?lang=FR-ca', expected: 'fr'},
+    {languages: ['de-DE'], language: 'de-DE', search: '?lang=unknown', expected: 'en'},
+  ])('selects $expected for browser $languages and query "$search"', ({languages, language, search, expected}) => {
+    const source = readFileSync(join(REPO_ROOT, 'docs/mock/mock-data.js'), 'utf8');
+    const doc = {documentElement: {lang: 'en'}};
+    const run = new Function('navigator', 'location', 'document', 'window', source + '; return demoLanguage;');
+    expect(run({languages, language}, {search}, doc, {})).toBe(expected);
+    expect(doc.documentElement.lang).toBe(expected);
+  });
+});

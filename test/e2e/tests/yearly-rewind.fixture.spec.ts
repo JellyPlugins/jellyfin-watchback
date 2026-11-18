@@ -13,7 +13,7 @@ for (const language of ['en', 'de', 'zh']) {
    await page.evaluate(({language, strings}) => {
     document.documentElement.lang = language;
     const report = {SnapshotId: 'fixed', PeriodStartUtc: '2025-12-15T00:00:00Z', SnapshotAtUtc: '2026-12-15T00:00:00Z', TimeZoneId: 'UTC', DataState: 'Partial', ActiveDays: 20,
-      Items: [{ItemId: 'deleted', Name: 'Eine sehr lange Filmüberschrift mit außergewöhnlichen Wörtern und 中文字符', ItemType: 'Movie', ActiveSeconds: 5400, Genres: ['Drama']}, {ItemId: 'episode', Name: 'Episode', ItemType: 'Episode', SeriesId: 'series', SeriesName: 'Demo series', ActiveSeconds: 1800, Genres: ['Comedy']}],
+      Items: [{ItemId: 'deleted', Name: 'A very long movie title with unusual Unicode characters and 中文字符', ItemType: 'Movie', ActiveSeconds: 5400, Genres: ['Drama']}, {ItemId: 'episode', Name: 'Episode', ItemType: 'Episode', SeriesId: 'series', SeriesName: 'Demo series', ActiveSeconds: 1800, Genres: ['Comedy']}],
       Months: Array.from({length: 12}, (_, index) => ({StartUtc: new Date(Date.UTC(2025, 11 + index, 15)).toISOString(), EndUtc: new Date(Date.UTC(2026, index, 15)).toISOString(), ActiveSeconds: 600, Genres: [{Name: 'Drama', ActiveSeconds: 450}, {Name: 'Comedy', ActiveSeconds: 150}]})),
       Insights: {HourlySeconds: Array.from({length:24}, (_, hour) => hour === 20 ? 5400 : hour === 9 ? 1800 : 0), WeekdaySeconds: [0,0,0,0,5400,1800,0], LongestStreakDays:2, LongestStreakStart:'2026-10-02', LongestStreakEnd:'2026-10-03'},
       Comparison: {PeriodStartUtc:'2024-12-15T00:00:00Z',SnapshotAtUtc:'2025-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Ready',ActiveSeconds:3600,MovieCount:2,EpisodeCount:0,SeriesCount:0,ActiveDays:12,Genres:['Drama','Adventure'],TopGenre:'Drama'}};

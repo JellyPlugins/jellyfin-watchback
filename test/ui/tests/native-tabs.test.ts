@@ -163,19 +163,19 @@ describe('native tabs: mounting', () => {
     setupHome();
     const onMount = addEntry(ui, 'a');
     ui.ensureInjected();
-    ui.updateTitle('a', 'Jahresrückblick 2027');
-    ui.updateTitle('a', 'Jahresrückblick 2027');
+    ui.updateTitle('a', 'Yearly Rewind 2027');
+    ui.updateTitle('a', 'Yearly Rewind 2027');
     ui.updateTitle('missing', 'Ignored');
     const button = document.getElementById('jfw-tab-btn-a')!;
     const link = document.getElementById('jfw-tab-link-a')!;
-    expect(button.textContent).toBe('Jahresrückblick 2027');
+    expect(button.textContent).toBe('Yearly Rewind 2027');
     for (const element of [button, link]) {
-      expect(element.title).toBe('Jahresrückblick 2027');
-      expect(element.getAttribute('aria-label')).toBe('Jahresrückblick 2027');
+      expect(element.title).toBe('Yearly Rewind 2027');
+      expect(element.getAttribute('aria-label')).toBe('Yearly Rewind 2027');
     }
     link.remove();
     ui.ensureInjected();
-    expect(document.getElementById('jfw-tab-link-a')?.title).toBe('Jahresrückblick 2027');
+    expect(document.getElementById('jfw-tab-link-a')?.title).toBe('Yearly Rewind 2027');
     expect(onMount).toHaveBeenCalledTimes(1);
   });
 
@@ -188,12 +188,12 @@ describe('native tabs: mounting', () => {
     layout(button);
     ui.ensureInjected();
     expect(link.isConnected).toBe(false);
-    ui.updateTitle('a', 'Jahresrückblick 2027');
+    ui.updateTitle('a', 'Yearly Rewind 2027');
     Object.defineProperty(button, 'offsetParent', {value: null, configurable: true});
     ui.ensureInjected();
     expect(document.getElementById('jfw-tab-link-a')).toBe(link);
-    expect(link.title).toBe('Jahresrückblick 2027');
-    expect(link.getAttribute('aria-label')).toBe('Jahresrückblick 2027');
+    expect(link.title).toBe('Yearly Rewind 2027');
+    expect(link.getAttribute('aria-label')).toBe('Yearly Rewind 2027');
   });
 
   test('a panel moved out of the root is re-appended and deactivated', () => {

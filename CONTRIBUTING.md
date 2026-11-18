@@ -2,6 +2,8 @@
 
 Use the SDK pinned in `global.json` and Node from `.nvmrc`. Production code, xUnit tests, shipped browser modules, Vitest and Playwright are organized separately.
 
+Write code identifiers, comments, documentation, and test descriptions in English. Keep localized text in translation dictionaries; non-English test data is appropriate for localization and Unicode tests.
+
 ## Structure
 
 ```text

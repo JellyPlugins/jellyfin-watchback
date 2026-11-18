@@ -30,7 +30,7 @@ dotnet publish Jellyfin.Plugin.Watchback -c Release -o publish
 
 Copy the publish output into its own folder under Jellyfin's `plugins` directory and restart Jellyfin. Open **Dashboard → Plugins → jellyfin-watchback** to configure it. The plugin injects its own lightweight web client script without editing Jellyfin's web files. The personal tab appears during the configured period.
 
-The [GitHub Pages demo](https://jellyplugins.github.io/jellyfin-watchback/) is deployed by the Pages workflow once this repository has been pushed and Pages has been enabled. Its sample data deliberately shows the 2026 rewind throughout the year. Demo settings affect only the current page.
+The [GitHub Pages demo](https://jellyplugins.github.io/jellyfin-watchback/) is deployed by the Pages workflow once this repository has been pushed and Pages has been enabled. Its sample data deliberately shows the 2026 rewind throughout the year. The demo follows the browser's preferred supported language and falls back to English. Use `?lang=en` (or another supported language code) to override it.
 
 ## Data storage
 
