@@ -270,6 +270,7 @@ public sealed class YearlyRewindServiceTests : IDisposable
     [InlineData(true, true)]
     public void StatusDistinguishesDisabledMissingAndAvailableReports(bool enabled, bool stored)
     {
+        _clock.Now = Local(2026, 12, 15);
         YearlyRewindSnapshot? snapshot = stored ? StoredMovieReport() : null;
         _config.YearlyRewindEnabled = enabled;
         var controller = Controller();

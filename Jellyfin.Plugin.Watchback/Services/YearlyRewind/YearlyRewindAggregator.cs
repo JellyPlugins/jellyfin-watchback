@@ -28,9 +28,13 @@ internal static class YearlyRewindAggregator
         var imported = EligibleImports(history, start, cutoff, generated).ToArray();
         var importCounts = new Dictionary<Guid, int>();
         AddImported(imported, metadata, itemGenres, estimated, importCounts, totals, months, cutoff);
-        var importedPlays = imported.Select(row => (row.Item.ItemId, row.StartedAtUtc)).ToHashSet();
+        var importedStarts = imported.ToLookup(row => row.Item.ItemId, row => row.StartedAtUtc);
+        // Independent playback-start handlers and timestamp precision can differ slightly.
+        // Match only starts within five seconds; later plays retain their own estimate.
+        // Reconstruct returns at most one row per item, so each import is checked at most once.
         var reconstructed = Reconstruct(history, start, cutoff, generated)
-            .Where(row => !importedPlays.Contains((row.Item.ItemId, row.LastPlayedAtUtc!.Value))).ToArray();
+            .Where(row => !importedStarts[row.Item.ItemId].Any(started =>
+                (started - row.LastPlayedAtUtc!.Value).Duration() <= TimeSpan.FromSeconds(5))).ToArray();
         var reconstructedIds = reconstructed.Select(row => row.Item.ItemId).ToHashSet();
         AddReconstructed(reconstructed, metadata, itemGenres, estimated, totals, months);
         CompleteMonthlyGenres(months, totals);

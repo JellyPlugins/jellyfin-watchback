@@ -22,6 +22,7 @@ public sealed class PlaybackReportingImportTests : IDisposable
 {
     private readonly string _directory = Path.Join(Path.GetTempPath(), "jfw-reporting-" + Guid.NewGuid().ToString("N"));
     private readonly DateTimeOffset _cutoff = new(2026, 12, 15, 0, 0, 0, TimeSpan.Zero);
+    private readonly DateTimeOffset _localCutoff = new(TimeZoneInfo.ConvertTimeToUtc(new DateTime(2026, 12, 15), TimeZoneInfo.Local));
     private readonly Guid _userId = Guid.NewGuid();
     private readonly Guid _itemId = Guid.NewGuid();
     private readonly Mock<IApplicationPaths> _paths = new();
@@ -157,6 +158,7 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
         var entry = new PlaybackReportingReader.Entry("import", _userId, _itemId, "Movie", "Movie", _cutoff.AddMonths(-10), 600);
         history.Import(entry, Item(), _cutoff);
+        history.Record(Item(), new UserItemActivity { UserId = _userId, Played = true, PlayCount = 1, LastPlayedDate = entry.StartedAtUtc.AddMilliseconds(250).UtcDateTime }, _cutoff.AddDays(-1), _cutoff.AddDays(-1));
         history.Record(Item(), new UserItemActivity { UserId = _userId, Played = true, PlayCount = 2, LastPlayedDate = _cutoff.AddMonths(-3).UtcDateTime }, _cutoff, _cutoff);
         var report = Build(history);
         var item = Assert.Single(report.Items);
@@ -168,6 +170,58 @@ public sealed class PlaybackReportingImportTests : IDisposable
         Assert.Equal(4200, report.Months.Sum(month => month.EstimatedSeconds));
     }
 
+    [Theory]
+    [InlineData(-6, false)]
+    [InlineData(-5, true)]
+    [InlineData(-0.125, true)]
+    [InlineData(0, true)]
+    [InlineData(0.125, true)]
+    [InlineData(5, true)]
+    [InlineData(6, false)]
+    [InlineData(600, false)]
+    public void IndependentPlaybackStartTimestampsAreCorrelatedWithoutDroppingSeparatePlays(double offsetSeconds, bool samePlayback)
+    {
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
+        var entry = new PlaybackReportingReader.Entry("import", _userId, _itemId, "Movie", "Movie", _cutoff.AddMonths(-3), 600);
+        history.Import(entry, Item(), _cutoff);
+        history.Record(Item(), new UserItemActivity { UserId = _userId, Played = true, PlayCount = 1,
+            LastPlayedDate = entry.StartedAtUtc.AddSeconds(offsetSeconds).UtcDateTime }, _cutoff, _cutoff);
+        var report = Build(history);
+        var item = Assert.Single(report.Items);
+        Assert.Equal(samePlayback ? 1 : 2, item.PlayCount);
+        Assert.Equal(samePlayback ? 600 : 4200, item.ActiveSeconds);
+        Assert.Equal(item.ActiveSeconds, item.EstimatedSeconds);
+        Assert.Equal(item.ActiveSeconds, report.Months.Sum(month => month.EstimatedSeconds));
+        Assert.Equal(samePlayback ? 0 : 1, report.JellyfinReconstructedItemCount);
+    }
+
+    [Fact]
+    public void MatchingTheLatestObservationDoesNotReviveAnOlderEstimate()
+    {
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
+        var entry = new PlaybackReportingReader.Entry("import", _userId, _itemId, "Movie", "Movie", _cutoff.AddMonths(-3), 600);
+        history.Import(entry, Item(), _cutoff);
+        history.Record(Item(), new UserItemActivity { UserId = _userId, Played = true, PlayCount = 1, LastPlayedDate = _cutoff.AddMonths(-4).UtcDateTime }, _cutoff.AddDays(-1), _cutoff.AddDays(-1));
+        history.Record(Item(), new UserItemActivity { UserId = _userId, Played = true, PlayCount = 2, LastPlayedDate = entry.StartedAtUtc.AddMilliseconds(250).UtcDateTime }, _cutoff, _cutoff);
+        var item = Assert.Single(Build(history).Items);
+        Assert.Equal(1, item.PlayCount);
+        Assert.Equal(600, item.ActiveSeconds);
+    }
+
+    [Fact]
+    public void MatchingStartTimesForDifferentTitlesRetainBothPlays()
+    {
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
+        var entry = new PlaybackReportingReader.Entry("import", _userId, _itemId, "Movie", "Movie", _cutoff.AddMonths(-3), 600);
+        history.Import(entry, Item(), _cutoff);
+        history.Record(Item() with { ItemId = Guid.NewGuid() }, new UserItemActivity { UserId = _userId, Played = true, PlayCount = 1,
+            LastPlayedDate = entry.StartedAtUtc.AddMilliseconds(250).UtcDateTime }, _cutoff, _cutoff);
+        var report = Build(history);
+        Assert.Equal(2, report.Items.Count);
+        Assert.Equal(4200, report.Items.Sum(item => item.ActiveSeconds));
+        Assert.Equal(2, report.Items.Sum(item => item.PlayCount));
+    }
+
     [Fact]
     public void InaccessibleDatabaseLookupIsAnErrorRatherThanAnEmptyImport()
     {
@@ -177,6 +231,12 @@ public sealed class PlaybackReportingImportTests : IDisposable
         try
         {
             File.SetUnixFileMode(_directory, UnixFileMode.None);
+            var accessError = Record.Exception(() =>
+            {
+                using var probe = File.OpenRead(Path.Join(_directory, "playback_reporting.db"));
+            });
+            Assert.SkipWhen(accessError is null, "The runner can bypass the fixture's file permissions.");
+            Assert.IsType<UnauthorizedAccessException>(accessError);
             Assert.Throws<UnauthorizedAccessException>(() => Reader().Read(_cutoff));
         }
         finally
@@ -296,21 +356,21 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var users = new Mock<IUserManager>();
         users.Setup(value => value.GetUsers()).Returns([user]);
         var insights = new Mock<IUserActivityInsightsService>();
-        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _cutoff.UtcDateTime });
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
         var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
         using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
             new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
             _paths.Object, TimeProvider.System, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
-        service.Tick(_cutoff, allowRefresh: true);
+        service.Tick(_localCutoff, allowRefresh: true);
         var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
         Assert.Single(store.Load(_userId).ImportedPlayback);
         if (!initiallyEnabled) Assert.Null(consumer.Load(_userId));
         config.YearlyRewindEnabled = true;
-        service.Tick(_cutoff.AddMinutes(1), allowRefresh: true);
+        service.Tick(_localCutoff.AddMinutes(1), allowRefresh: true);
         var report = consumer.Load(_userId)!;
         Assert.Equal(1, report.PlaybackReportingPlayCount);
         Insert(db, "2026-12-07 00:00:00Z");
-        service.Tick(_cutoff.AddHours(2), allowRefresh: true);
+        service.Tick(_localCutoff.AddHours(2), allowRefresh: true);
         Assert.Equal(2, store.Load(_userId).ImportedPlayback.Count);
         Assert.Equal(report.SnapshotId, consumer.Load(_userId)!.SnapshotId);
         Assert.Equal(1, consumer.Load(_userId)!.PlaybackReportingPlayCount);
@@ -334,16 +394,53 @@ public sealed class PlaybackReportingImportTests : IDisposable
         using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
             new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
             _paths.Object, TimeProvider.System, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
-        for (var second = 0; second < 10; second++) service.Tick(_cutoff.AddSeconds(second), allowRefresh: true);
+        for (var second = 0; second < 10; second++) service.Tick(_localCutoff.AddSeconds(second), allowRefresh: true);
         _plugins.VerifyGet(plugins => plugins.Plugins, Times.Once);
         Assert.Null(consumer.Load(_userId));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void SuccessfulBaselineWithNoAvailableUsersWaitsAnHourBeforeRefreshingAgain(bool hasDisabledUser, bool recordBaseline)
+    {
+        var configuration = new Mock<IPluginConfigurationService>();
+        configuration.SetupGet(value => value.IsInitialized).Returns(true);
+        configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration { YearlyRewindEnabled = true });
+        var disabled = new User("disabled", "default", "default") { Id = _userId };
+        disabled.SetPermission(PermissionKind.IsDisabled, true);
+        var users = new Mock<IUserManager>();
+        users.Setup(value => value.GetUsers()).Returns(hasDisabledUser ? [disabled] : []);
+        var insights = new Mock<IUserActivityInsightsService>();
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
+        var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
+        var clock = new TestClock { Now = _localCutoff };
+        using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
+            new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
+            _paths.Object, clock, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
+        if (recordBaseline)
+        {
+            service.Record(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
+        }
+        else
+        {
+            service.Tick(_localCutoff);
+        }
+
+        Assert.False(((IUserActivityHistoryConsumer)consumer).NeedsCurrentState(_localCutoff, []));
+        for (var second = 1; second <= 10; second++) service.Tick(_localCutoff.AddSeconds(second));
+        insights.Verify(value => value.BuildActivityReport(), Times.Once);
+        service.Tick(_localCutoff.AddHours(1).AddSeconds(10));
+        insights.Verify(value => value.BuildActivityReport(), Times.Exactly(2));
     }
 
     [Fact]
     public void AlreadySealedReportsRecoverEvenWhenTheOptionalSourceIsUnavailable()
     {
         using var db = Database(false);
-        var report = Build(new UserActivityHistory());
+        var report = YearlyRewindAggregator.Build(_userId, new UserActivityHistory(), _localCutoff.AddYears(-1), _localCutoff, _localCutoff, TimeZoneInfo.Local);
         new YearlyRewindPendingStore(Path.Join(_directory, "jellyfin-watchback")).Seal(report);
         var configuration = new Mock<IPluginConfigurationService>();
         configuration.SetupGet(value => value.IsInitialized).Returns(true);
@@ -352,12 +449,12 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var users = new Mock<IUserManager>();
         users.Setup(value => value.GetUsers()).Returns([user]);
         var insights = new Mock<IUserActivityInsightsService>();
-        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _cutoff.UtcDateTime });
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
         var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
         using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
             new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
             _paths.Object, TimeProvider.System, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
-        service.Tick(_cutoff, allowRefresh: true);
+        service.Tick(_localCutoff, allowRefresh: true);
         Assert.Equal(report.SnapshotId, consumer.Load(_userId)!.SnapshotId);
     }
 
@@ -376,20 +473,20 @@ public sealed class PlaybackReportingImportTests : IDisposable
         users.Setup(value => value.GetUsers()).Returns([user]);
         users.Setup(value => value.GetUserById(_userId)).Returns(user);
         var insights = new Mock<IUserActivityInsightsService>();
-        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _cutoff.UtcDateTime });
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
         var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
-        var clock = new TestClock { Now = _cutoff };
+        var clock = new TestClock { Now = _localCutoff };
         using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
             new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
             _paths.Object, clock, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
-        service.Tick(_cutoff, allowRefresh: true);
+        service.Tick(_localCutoff, allowRefresh: true);
         Assert.Null(consumer.Load(_userId));
-        clock.Now = _cutoff.AddSeconds(10);
-        service.Record(new UserActivityResult { GeneratedAt = _cutoff.UtcDateTime });
+        clock.Now = _localCutoff.AddSeconds(10);
+        service.Record(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
         Assert.Null(consumer.Load(_userId));
         using var repaired = Database();
         Insert(repaired);
-        clock.Now = _cutoff.AddMinutes(2);
+        clock.Now = _localCutoff.AddMinutes(2);
         var observedId = Guid.NewGuid();
         if (recoverDuringRecord)
         {
@@ -397,7 +494,7 @@ public sealed class PlaybackReportingImportTests : IDisposable
             {
                 GeneratedAt = clock.Now.UtcDateTime,
                 Items = [new() { ItemId = observedId, ItemName = "Task observation", ItemType = "Movie", RuntimeTicks = TimeSpan.TicksPerHour,
-                    UserActivities = [new() { UserId = _userId, Played = true, PlayCount = 1, LastPlayedDate = _cutoff.AddDays(-2).UtcDateTime }] }]
+                    UserActivities = [new() { UserId = _userId, Played = true, PlayCount = 1, LastPlayedDate = _localCutoff.AddDays(-2).UtcDateTime }] }]
             });
             Assert.Contains(consumer.Load(_userId)!.Items, item => item.ItemId == observedId);
         }
@@ -429,12 +526,12 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
         using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
             new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
-            _paths.Object, new TestClock { Now = _cutoff }, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
-        service.Tick(_cutoff);
+            _paths.Object, new TestClock { Now = _localCutoff }, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
+        service.Tick(_localCutoff);
         Assert.Null(consumer.Load(_userId));
         user.SetPermission(PermissionKind.IsDisabled, false);
-        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _cutoff.UtcDateTime });
-        service.Tick(_cutoff.AddMinutes(1));
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
+        service.Tick(_localCutoff.AddMinutes(1));
         Assert.Equal(1, consumer.Load(_userId)!.PlaybackReportingPlayCount);
         _plugins.VerifyGet(plugins => plugins.Plugins, Times.Exactly(2));
     }
@@ -447,12 +544,12 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var configuration = new Mock<IPluginConfigurationService>();
         configuration.SetupGet(value => value.IsInitialized).Returns(true);
         configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration { YearlyRewindEnabled = true });
-        var cutoff = YearlyRewindWindow.LatestSnapshotAt(_cutoff, "12-15", TimeZoneInfo.Local);
+        var cutoff = YearlyRewindWindow.LatestSnapshotAt(_localCutoff, "12-15", TimeZoneInfo.Local);
         var start = YearlyRewindWindow.PeriodStart(cutoff, "12-15", TimeZoneInfo.Local);
         var history = new UserActivityHistory { PlaybackReportingBeforeUtc = overlaps ? start.AddMinutes(1) : start };
         var user = new User("test", "default", "default") { Id = _userId };
         var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
-        ((IUserActivityHistoryConsumer)consumer).Tick(_cutoff, [user], _ => history, true, false);
+        ((IUserActivityHistoryConsumer)consumer).Tick(_localCutoff, [user], _ => history, true, false);
         Assert.Equal(!overlaps, consumer.Load(_userId) is not null);
     }
 
@@ -467,17 +564,17 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var configuration = new Mock<IPluginConfigurationService>();
         configuration.SetupGet(value => value.IsInitialized).Returns(true);
         configuration.Setup(value => value.GetConfiguration()).Returns(config);
-        var now = _cutoff.AddDays(3);
+        var now = _localCutoff.AddDays(3);
         var history = new UserActivityHistory { PlaybackReportingBeforeUtc = now };
-        var started = reason == "old" ? _cutoff.AddYears(-2) : reason == "after-cutoff" ? _cutoff.AddDays(1) : _cutoff.AddDays(-10);
+        var started = reason == "old" ? _localCutoff.AddYears(-2) : reason == "after-cutoff" ? _localCutoff.AddDays(1) : _localCutoff.AddDays(-10);
         var entry = new PlaybackReportingReader.Entry("ineligible", _userId, _itemId, "Movie", "Movie", started, 600);
         history.Import(entry, Item(), reason == "future-import" ? now.AddDays(1) : now);
-        if (reason == "after-boundary") history.PlaybackReportingBeforeUtc = _cutoff.AddDays(-20);
+        if (reason == "after-boundary") history.PlaybackReportingBeforeUtc = _localCutoff.AddDays(-20);
         var user = new User("test", "default", "default") { Id = _userId };
         var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
         ((IUserActivityHistoryConsumer)consumer).Tick(now, [user], _ => history, true, true);
         Assert.Null(consumer.Load(_userId));
-        var eligible = entry with { SourceKey = "eligible", StartedAtUtc = _cutoff.AddDays(-30) };
+        var eligible = entry with { SourceKey = "eligible", StartedAtUtc = _localCutoff.AddDays(-30) };
         history.Import(eligible, Item(), now);
         ((IUserActivityHistoryConsumer)consumer).Tick(now, [user], _ => history, false, true);
         Assert.Contains(consumer.Load(_userId)!.Items, item => item.ItemId == _itemId);

@@ -170,6 +170,11 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         {
             foreach (var consumer in _consumers)
             {
+                if (availableUsers.Length == 0)
+                {
+                    consumer.Tick(now, availableUsers, History, refreshed, _reportingReady);
+                }
+
                 foreach (var group in availableUsers.GroupBy(user => _reporting is null || (_reportingReady && _reportingUsers.Contains(user.Id))))
                 {
                     consumer.Tick(now, group.ToArray(), History, refreshed, group.Key);
@@ -362,7 +367,12 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
             _initialized = true;
             foreach (var consumer in _consumers)
             {
-                var users = _users.GetUsers().Where(user => !user.HasPermission(PermissionKind.IsDisabled) && TryHistory(user.Id, now, out _));
+                var users = _users.GetUsers().Where(user => !user.HasPermission(PermissionKind.IsDisabled) && TryHistory(user.Id, now, out _)).ToArray();
+                if (users.Length == 0)
+                {
+                    consumer.Tick(now, users, History, true, _reportingReady);
+                }
+
                 foreach (var group in users.GroupBy(user => _reporting is null || (_reportingReady && _reportingUsers.Contains(user.Id))))
                 {
                     consumer.Tick(now, group.ToArray(), History, true, group.Key);
