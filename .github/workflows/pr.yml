@@ -256,6 +256,16 @@ jobs:
       # UI coverage is reported to Codecov by the ui-tests job, not Sonar.
       RunVitest: "false"
     steps:
+    - name: Explain unavailable SonarCloud analysis
+      if: ${{ env.SONAR_TOKEN == '' }}
+      run: |
+        echo "::notice::SonarCloud analysis skipped: SONAR_TOKEN is unavailable."
+        {
+          echo "## SonarCloud analysis skipped"
+          echo 'The SONAR_TOKEN secret is unavailable. Configure it for this repository to enable analysis.'
+          echo 'Secrets are also unavailable to pull requests from forks.'
+        } >> "$GITHUB_STEP_SUMMARY"
+
     - name: Checkout repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
