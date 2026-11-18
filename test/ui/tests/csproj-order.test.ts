@@ -27,7 +27,7 @@ describe('loader module order matches the .csproj compose order', () => {
   test('the demo loads the shared UI runtime before the rewind', () => {
     const demo = readFileSync(join(REPO_ROOT, 'docs', 'index.html'), 'utf8');
     const parsedDemo = new DOMParser().parseFromString(demo, 'text/html');
-    const scripts = Array.from(parsedDemo.querySelectorAll('script[src]'), script => script.getAttribute('src'));
+    const scripts = Array.from(parsedDemo.querySelectorAll('script[src]'), script => script.getAttribute('src')!.split('?')[0]);
     const runtime = scripts.indexOf('js/UiPrimitives.js');
     const discovery = scripts.indexOf('js/yearly-rewind.js');
     expect(runtime).toBeGreaterThanOrEqual(0);

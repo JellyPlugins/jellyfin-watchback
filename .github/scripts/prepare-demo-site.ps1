@@ -28,6 +28,18 @@ Copy-Item (Join-Path $docsRoot 'mock\mock-data.js') $jsTarget -Force
 Copy-Item (Join-Path $repoRoot 'Jellyfin.Plugin.Watchback\js\native-tabs.js') $jsTarget -Force
 Copy-Item (Join-Path $repoRoot 'Jellyfin.Plugin.Watchback\js\yearly-rewind.js') $jsTarget -Force
 
+# Content versions prevent cached scripts from an earlier demo layout being mixed
+# with a new index.html (for example, after removing the settings navigation).
+$indexPath = Join-Path $docsRoot 'index.html'
+$demoHtml = Get-Content -Path $indexPath -Raw
+$demoHtml = [regex]::Replace($demoHtml, '(src|href)="((?:js|css)/[^"?]+)(?:\?[^"]*)?"', {
+    param($asset)
+    $assetPath = Join-Path $docsRoot $asset.Groups[2].Value
+    $version = (Get-FileHash -Path $assetPath -Algorithm SHA256).Hash.ToLowerInvariant().Substring(0, 12)
+    return '{0}="{1}?v={2}"' -f $asset.Groups[1].Value, $asset.Groups[2].Value, $version
+})
+Set-Content -Path $indexPath -Value $demoHtml -NoNewline -Encoding utf8
+
 $noJekyllPath = Join-Path $docsRoot '.nojekyll'
 Set-Content -Path $noJekyllPath -Value '' -NoNewline
 
