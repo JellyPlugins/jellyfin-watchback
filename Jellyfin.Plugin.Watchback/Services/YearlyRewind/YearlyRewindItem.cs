@@ -24,6 +24,8 @@ internal sealed record YearlyRewindItem
 
     public bool HasReconstructedActivity { get; init; }
 
+    public bool? HasJellyfinReconstructedActivity { get; init; }
+
     public int PlaybackReportingPlayCount { get; init; }
 
     public int PlayCount { get; init; }

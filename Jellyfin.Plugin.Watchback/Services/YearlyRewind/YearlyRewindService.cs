@@ -109,13 +109,15 @@ public sealed class YearlyRewindService : IUserActivityHistoryConsumer
         {
             var current = RecoverPending(userId, cutoff);
 
-            if (historyReady && NeedsPublication(current, cutoff))
+            if (NeedsPublication(current, cutoff))
             {
                 var facts = history(userId);
-                if (current is not null || facts.Coverage.Any(period => period.StartUtc < cutoff)
-                    || facts.ImportedPlayback.Any(row => row.StartedAtUtc < cutoff)
+                var start = YearlyRewindWindow.PeriodStart(cutoff, config.YearlyRewindStartDate, TimeZoneInfo.Local);
+                var importsReady = historyReady || facts.PlaybackReportingBeforeUtc <= start;
+                if (importsReady && (current is not null || facts.Coverage.Any(period => period.StartUtc < cutoff)
+                    || YearlyRewindAggregator.EligibleImports(facts, start, cutoff, now).Any()
                     || facts.Observations.Any(row => row.LastPlayedAtUtc < cutoff)
-                    || YearlyRewindWindow.IsTabVisible(now, config.YearlyRewindStartDate, config.YearlyRewindEndDate, TimeZoneInfo.Local))
+                    || YearlyRewindWindow.IsTabVisible(now, config.YearlyRewindStartDate, config.YearlyRewindEndDate, TimeZoneInfo.Local)))
                 {
                     current = CreateAndPublish(userId, facts, cutoff, now, config.YearlyRewindStartDate, current);
                 }

@@ -33,7 +33,21 @@ internal sealed class PlaybackReportingReader
     internal IReadOnlyList<Entry> Read(DateTimeOffset now)
     {
         // A leftover database alone is not proof that the integration is installed.
-        if (!_plugins.Plugins.Any(plugin => plugin.Id == PluginId) || !File.Exists(_path))
+        if (!_plugins.Plugins.Any(plugin => plugin.Id == PluginId))
+        {
+            return [];
+        }
+
+        try
+        {
+            // Unlike File.Exists, metadata lookup propagates access and I/O failures.
+            _ = File.GetAttributes(_path);
+        }
+        catch (FileNotFoundException)
+        {
+            return [];
+        }
+        catch (DirectoryNotFoundException)
         {
             return [];
         }

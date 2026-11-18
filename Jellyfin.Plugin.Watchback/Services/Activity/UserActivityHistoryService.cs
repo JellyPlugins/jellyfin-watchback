@@ -40,6 +40,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
     private readonly Dictionary<Guid, DateTimeOffset> _historyRetryAt = [];
     private readonly Dictionary<Guid, UserActivityCoverage> _coverage = [];
     private readonly HashSet<Guid> _dirty = [];
+    private readonly HashSet<Guid> _reportingUsers = [];
     private readonly Lock _gate = new();
     private DateTimeOffset _nextReportingRefresh;
     private bool _reportingReady;
@@ -93,7 +94,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 {
                     lock (_gate)
                     {
-                        Tick(_clock.GetUtcNow());
+                        Tick(_clock.GetUtcNow(), allowRefresh: true, notifyConsumers: true);
                     }
                 }
                 catch (Exception ex) when (!ex.IsFatal())
@@ -121,7 +122,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         }
     }
 
-    internal void Tick(DateTimeOffset now, bool allowRefresh = true)
+    internal void Tick(DateTimeOffset now, bool allowRefresh = true, bool notifyConsumers = true)
     {
         if (!_configuration.IsInitialized)
         {
@@ -165,11 +166,14 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
             Flush();
         }
 
-        if (_initialized)
+        if (_initialized && notifyConsumers)
         {
             foreach (var consumer in _consumers)
             {
-                consumer.Tick(now, availableUsers, History, refreshed, _reportingReady);
+                foreach (var group in availableUsers.GroupBy(user => _reporting is null || (_reportingReady && _reportingUsers.Contains(user.Id))))
+                {
+                    consumer.Tick(now, group.ToArray(), History, refreshed, group.Key);
+                }
             }
         }
 
@@ -190,12 +194,15 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
             _reportingCurrent = false;
         }
 
-        if (_reporting is null || (now < _nextReportingRefresh && (!needsCurrent || _reportingCurrent)))
+        if (_reporting is null || (now < _nextReportingRefresh
+            && (!needsCurrent || (_reportingCurrent && users.All(user => _reportingUsers.Contains(user.Id))))))
         {
             return;
         }
 
         _reportingCurrent = needsCurrent;
+        _reportingUsers.Clear();
+        _reportingUsers.UnionWith(users.Select(user => user.Id));
         try
         {
             var available = users.ToDictionary(user => user.Id);
@@ -350,12 +357,16 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
             }
 
             var now = _clock.GetUtcNow();
-            Tick(now, false); // A due cutoff waits for this task snapshot before its first publication.
+            Tick(now, false, false); // A due cutoff waits for this task snapshot before its first publication.
             Apply(snapshot, now);
             _initialized = true;
             foreach (var consumer in _consumers)
             {
-                consumer.Tick(now, _users.GetUsers().Where(user => !user.HasPermission(PermissionKind.IsDisabled) && TryHistory(user.Id, now, out _)).ToArray(), History, true, _reportingReady);
+                var users = _users.GetUsers().Where(user => !user.HasPermission(PermissionKind.IsDisabled) && TryHistory(user.Id, now, out _));
+                foreach (var group in users.GroupBy(user => _reporting is null || (_reportingReady && _reportingUsers.Contains(user.Id))))
+                {
+                    consumer.Tick(now, group.ToArray(), History, true, group.Key);
+                }
             }
 
             Flush();
@@ -472,7 +483,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                     return;
                 }
 
-                Tick(now, false);
+                Tick(now, false, true);
                 if (args.Item is not Video video || _virtualItems.IsVirtual(args.Item) || args.IsAutomated)
                 {
                     return;

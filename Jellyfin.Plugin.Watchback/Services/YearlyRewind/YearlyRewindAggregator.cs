@@ -25,12 +25,13 @@ internal static class YearlyRewindAggregator
         var estimated = new Dictionary<Guid, double>();
         var months = CreateMonths(start, cutoff, zone);
         var totals = Measure(sessions, start, cutoff, zone, itemGenres, months);
-        var imported = history.ImportedPlayback.Where(row => row.ImportedAtUtc <= generated && row.StartedAtUtc >= start && row.StartedAtUtc < cutoff
-            && row.StartedAtUtc < (history.PlaybackReportingBeforeUtc ?? cutoff)).ToArray();
+        var imported = EligibleImports(history, start, cutoff, generated).ToArray();
         var importCounts = new Dictionary<Guid, int>();
         AddImported(imported, metadata, itemGenres, estimated, importCounts, totals, months, cutoff);
+        var importedPlays = imported.Select(row => (row.Item.ItemId, row.StartedAtUtc)).ToHashSet();
         var reconstructed = Reconstruct(history, start, cutoff, generated)
-            .Where(row => !importCounts.ContainsKey(row.Item.ItemId)).ToArray();
+            .Where(row => !importedPlays.Contains((row.Item.ItemId, row.LastPlayedAtUtc!.Value))).ToArray();
+        var reconstructedIds = reconstructed.Select(row => row.Item.ItemId).ToHashSet();
         AddReconstructed(reconstructed, metadata, itemGenres, estimated, totals, months);
         CompleteMonthlyGenres(months, totals);
         var seconds = totals.Seconds;
@@ -46,9 +47,10 @@ internal static class YearlyRewindAggregator
             ActiveSeconds = seconds[pair.Key],
             EstimatedSeconds = estimated.GetValueOrDefault(pair.Key),
             HasReconstructedActivity = estimated.ContainsKey(pair.Key),
+            HasJellyfinReconstructedActivity = reconstructedIds.Contains(pair.Key),
             PlaybackReportingPlayCount = importCounts.GetValueOrDefault(pair.Key),
             PlayCount = plays.GetValueOrDefault(pair.Key) + importCounts.GetValueOrDefault(pair.Key)
-                + (reconstructed.Any(row => row.Item.ItemId == pair.Key) ? 1 : 0)
+                + (reconstructedIds.Contains(pair.Key) ? 1 : 0)
         }).OrderByDescending(item => item.ActiveSeconds).ThenBy(item => item.Name, StringComparer.Ordinal).ThenBy(item => item.ItemId).ToList();
         var coverage = history.Coverage.OrderBy(period => period.StartUtc).ToArray();
         var state = DescribeCollection(coverage, start, cutoff, reconstructed.Length + importCounts.Count, items.Count > 0);
@@ -76,6 +78,10 @@ internal static class YearlyRewindAggregator
             CollectionStartedAtUtc = coverage.Select(period => (DateTimeOffset?)period.StartUtc).FirstOrDefault()
         };
     }
+
+    internal static IEnumerable<ImportedPlayback> EligibleImports(UserActivityHistory history, DateTimeOffset start, DateTimeOffset cutoff, DateTimeOffset generated)
+        => history.ImportedPlayback.Where(row => row.ImportedAtUtc <= generated && row.StartedAtUtc >= start && row.StartedAtUtc < cutoff
+            && row.StartedAtUtc < (history.PlaybackReportingBeforeUtc ?? cutoff));
 
     private static YearlyRewindMonth[] CreateMonths(DateTimeOffset start, DateTimeOffset cutoff, TimeZoneInfo zone)
     {
@@ -221,7 +227,7 @@ internal static class YearlyRewindAggregator
 
             var duration = EstimatedDuration(row);
             totals.Seconds[id] = totals.Seconds.GetValueOrDefault(id) + duration;
-            estimated[id] = duration;
+            estimated[id] = estimated.GetValueOrDefault(id) + duration;
             for (var monthIndex = 0; monthIndex < months.Length; monthIndex++)
             {
                 var month = months[monthIndex];

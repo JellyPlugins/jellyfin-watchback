@@ -8,6 +8,7 @@ import {rewindDataDir, rewindPath, visibleRewindWindow} from '../setup/yearly-re
 
 const field=(value:any,key:string)=>value[key]??value[key[0].toLowerCase()+key.slice(1)];
 test('imports retained Playback Reporting history once and keeps the published rewind frozen',async()=>{
+  test.setTimeout(180000);
   const auth=loadAuth();
   const admin=await apiContext(auth);
   const original=await(await admin.get(p('Configuration'))).json();
@@ -15,6 +16,7 @@ test('imports retained Playback Reporting history once and keeps the published r
   let user:Awaited<ReturnType<typeof request.newContext>>|undefined;
   const source=join(dirname(rewindDataDir()),'playback_reporting.db');
   const digest=()=>createHash('sha256').update(readFileSync(source)).digest('hex');
+  const window=visibleRewindWindow();
   try {
     const plugins=await(await admin.get('/Plugins')).json();
     expect(plugins.some((plugin:any)=>field(plugin,'Id').replaceAll('-','')==='5c53438191a343cb907a35aa02eb9d2c')).toBe(true);
@@ -39,7 +41,7 @@ test('imports retained Playback Reporting history once and keeps the published r
     }
     insert(played);
     const before=digest();
-    expect((await admin.put(p('Configuration'),{data:{...original,YearlyRewindEnabled:true,...visibleRewindWindow()}})).ok()).toBe(true);
+    expect((await admin.put(p('Configuration'),{data:{...original,YearlyRewindEnabled:true,...window}})).ok()).toBe(true);
     await expect.poll(async()=>field(await(await user!.get(p('YearlyRewind/My'))).json(),'PlaybackReportingPlayCount')).toBe(1);
     const report=await(await user.get(p('YearlyRewind/My'))).json();
     expect(field(report,'UserId').replaceAll('-','')).toBe(userId.replaceAll('-',''));
@@ -52,17 +54,29 @@ test('imports retained Playback Reporting history once and keeps the published r
     const history=()=>JSON.parse(readFileSync(historyFile,'utf8'));
     await expect.poll(()=>existsSync(historyFile)?history().importedPlayback.length:0).toBe(1);
     expect((await admin.put(p('Configuration'),{data:{...original,YearlyRewindEnabled:false}})).ok()).toBe(true);
-    await new Promise(resolve=>setTimeout(resolve,1200));
+    const disabledAt=Date.now();
+    const coverageEnd=()=>Math.max(...history().coverage.map((period:any)=>Date.parse(period.endUtc)));
+    await expect.poll(coverageEnd,{timeout:45000}).toBeGreaterThan(disabledAt);
+    const firstDisabledFlush=coverageEnd();
+    // A later collector flush proves that the preceding disabled tick completed,
+    // including its consumer notification, before enabling the same cutoff again.
+    await expect.poll(coverageEnd,{timeout:45000}).toBeGreaterThan(firstDisabledFlush);
     insert(new Date(played.getTime()-86400000));
-    expect((await admin.put(p('Configuration'),{data:{...original,YearlyRewindEnabled:true,...visibleRewindWindow()}})).ok()).toBe(true);
+    expect((await admin.put(p('Configuration'),{data:{...original,YearlyRewindEnabled:true,...window}})).ok()).toBe(true);
     await expect.poll(()=>history().importedPlayback.length).toBe(2);
     expect(new Set(history().importedPlayback.map((row:any)=>row.sourceKey)).size).toBe(2);
     const frozen=JSON.parse(readFileSync(rewindPath(userId),'utf8'));
     expect(frozen.snapshotId.replaceAll('-','')).toBe(snapshot.replaceAll('-',''));
     expect(field(frozen,'PlaybackReportingPlayCount')).toBe(1);
   } finally {
-    await admin.put(p('Configuration'),{data:original});
-    if(userId)await admin.delete('/Users/'+userId);
-    await user?.dispose();await admin.dispose();
+    try {
+      expect((await admin.put(p('Configuration'),{data:original})).ok()).toBe(true);
+    } finally {
+      try {
+        if(userId)expect((await admin.delete('/Users/'+userId)).ok()).toBe(true);
+      } finally {
+        try {await user?.dispose();} finally {await admin.dispose();}
+      }
+    }
   }
 });

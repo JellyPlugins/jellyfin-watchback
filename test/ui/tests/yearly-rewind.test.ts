@@ -273,11 +273,30 @@ test.each(['2028-02-28', '2028-02-29', '2028-03-01', '2028-12-31'])('E2E annual 
 
 
 test('identifies imported Playback Reporting history and keeps old reports readable', async () => {
- extra = {PlaybackReportingPlayCount: 12, ReconstructedItemCount: 1, DataState: 'Partial'};
+ extra = {PlaybackReportingPlayCount: 12, ReconstructedItemCount: 1, JellyfinReconstructedItemCount: 1, DataState: 'Partial'};
  loadYearlyRewindBundle(); await flush();
  expect(root.textContent).toContain('Historical plays imported from Playback Reporting: 12.');
  expect(root.textContent).toContain('Includes 1 titles reconstructed from Jellyfin data.');
  extra = {}; id = 'snapshot-b';
  document.dispatchEvent(new Event('jfw:session-changed')); await flush();
+ expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2027');
  expect(root.textContent).not.toContain('Historical plays imported');
+});
+
+test.each([false, true])('import-only reports show the source notice without a Jellyfin reconstruction claim (explicit count: %s)', async explicitCount => {
+ extra = {PlaybackReportingPlayCount: 1, ReconstructedItemCount: 1, DataState: 'Partial',
+  Items: [{ItemId: 'import', Name: 'Imported film', ItemType: 'Movie', ActiveSeconds: 600, EstimatedSeconds: 600, HasReconstructedActivity: true, PlaybackReportingPlayCount: 1, Genres: []}],
+  ...(explicitCount ? {JellyfinReconstructedItemCount: 0} : {})};
+ loadYearlyRewindBundle(); await flush();
+ expect(root.textContent).toContain('Historical plays imported from Playback Reporting: 1.');
+ expect(root.textContent).not.toContain('reconstructed from Jellyfin data');
+ expect(root.querySelector('.jfw-rewind-stat')?.textContent).toContain('≈');
+});
+
+test('mixed plays of one title retain both source notices', async () => {
+ extra = {PlaybackReportingPlayCount: 1, ReconstructedItemCount: 1, DataState: 'Partial',
+  Items: [{ItemId: 'mixed', Name: 'Film', ItemType: 'Movie', ActiveSeconds: 4200, EstimatedSeconds: 4200, HasReconstructedActivity: true, HasJellyfinReconstructedActivity: true, PlaybackReportingPlayCount: 1, Genres: []}]};
+ loadYearlyRewindBundle(); await flush();
+ expect(root.textContent).toContain('Historical plays imported from Playback Reporting: 1.');
+ expect(root.textContent).toContain('Includes 1 titles reconstructed from Jellyfin data.');
 });
