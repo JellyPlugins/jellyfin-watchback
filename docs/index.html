@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Jellyfin Watchback Demo</title>
+<link rel="stylesheet" href="css/Shared.css"><link rel="stylesheet" href="css/Settings.css">
+<style>body{margin:0;background:#101010;color:#eee;font:16px system-ui}main{max-width:1200px;margin:auto;padding:1rem}nav{display:flex;gap:.5rem;flex-wrap:wrap}nav button{font:inherit;color:inherit;background:#222;border:1px solid #555;border-radius:6px;padding:.6rem 1rem;cursor:pointer}nav button[aria-pressed=true]{border-color:#00a4dc}.demo-note{opacity:.7;font-size:.85rem}[hidden]{display:none!important}</style>
+</head><body class="jfw-ui-surface"><main><h1>Jellyfin Watchback</h1><p class="demo-note">Demo · Sample data · Settings are kept only until the page is reloaded.</p>
+<nav aria-label="Demo"><button type="button" data-demo-view="rewind" id="demoRewind" aria-pressed="true">Yearly Rewind</button><button type="button" data-demo-view="settings" aria-pressed="false">Settings</button></nav>
+<section id="demoReport"></section><section id="demoSettings" hidden><div id="WatchbackConfigPage"><form id="settingsForm" class="settings-form" novalidate></form></div></section></main>
+<script src="js/mock-data.js"></script><script src="js/Shared.js"></script><script src="js/UiPrimitives.js"></script><script src="js/Settings.js"></script><script src="js/Main.js"></script><script src="js/yearly-rewind.js"></script>
+</body></html>

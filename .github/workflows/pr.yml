@@ -1,0 +1,472 @@
+name: PR Build & Test
+
+on:
+  pull_request:
+  push:
+    # Codecov reports the DEFAULT-branch coverage, so main must produce its own
+    # report - otherwise the badge stays "unknown" no matter how many PRs run.
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  PLUGIN_NAME: Watchback
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+      with:
+        # Keep CI and local builds on the same Renovate-managed SDK pin.
+        global-json-file: global.json
+
+    - name: Restore
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --configuration Release --no-restore
+
+    - name: Publish plugin
+      run: |
+        dotnet publish Jellyfin.Plugin.Watchback/Jellyfin.Plugin.Watchback.csproj \
+          -c Release \
+          -o ./publish \
+          --no-build
+
+    - name: Create test package
+      run: |
+        # Ship the ENTIRE publish output, not a hand-picked *.dll subset: picking
+        # files silently dropped transitive deps / deps.json / logo.png before and
+        # made Jellyfin mark the plugin "Malfunctioned". This mirrors the TrueNAS
+        # deploy (scp of the whole publish dir) 1:1.
+        mkdir package
+        cp -r publish/. package/
+        # meta.json completes the installable layout (same file the deploy ships);
+        # generate-meta.ps1 reads manifest.json and is OS-independent.
+        pwsh -NoProfile -File .github/scripts/generate-meta.ps1 -OutputDir package
+        cd package
+        zip "../${PLUGIN_NAME}_test-build.zip" ./*
+
+    - name: Upload build artifact
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ env.PLUGIN_NAME }}_test-build
+        path: ${{ env.PLUGIN_NAME }}_test-build.zip
+        retention-days: 14
+
+  security-audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+      with:
+        global-json-file: global.json
+
+    - name: Restore
+      run: dotnet restore
+
+    - name: Check for vulnerable packages
+      run: |
+        set -euo pipefail
+        echo "## Dependency Vulnerability Scan" >> "$GITHUB_STEP_SUMMARY"
+        dotnet list package --vulnerable --include-transitive --format json > vuln-report.json
+        cat vuln-report.json
+        # Parse JSON output to detect vulnerabilities (SDK-independent, fail-closed)
+        VULN_COUNT=$(python3 -c "
+        import json
+        with open('vuln-report.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        count = sum(
+            len(pkg.get('vulnerabilities') or [])
+            for proj in data.get('projects', [])
+            for fw in proj.get('frameworks', [])
+            for pkg in (fw.get('topLevelPackages') or []) + (fw.get('transitivePackages') or [])
+        )
+        print(count)
+        ")
+        if [ "$VULN_COUNT" -gt 0 ]; then
+          echo "::error::Vulnerable NuGet packages detected! ($VULN_COUNT vulnerabilities)"
+          {
+            echo "[FAIL] **Vulnerable packages found! ($VULN_COUNT vulnerabilities)**"
+            echo '```json'
+            cat vuln-report.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+        else
+          echo "[PASS] **No vulnerable packages detected.**" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Run OSV-Scanner for Node/TS Dependencies
+      uses: google/osv-scanner-action/osv-scanner-action@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
+      with:
+          args: "--recursive"
+
+  ui-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        # This job never pushes, so the token must not stay in .git/config.
+        persist-credentials: false
+
+    - name: Setup Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: .nvmrc
+
+    # npm ci: installs exactly the committed lockfile, so CI never resolves
+    # unpinned dependency versions at run time.
+    - name: Install UI test dependencies
+      run: npm ci --ignore-scripts --no-audit --no-fund
+      working-directory: test/ui
+
+    - name: Run UI tests with coverage gate
+      run: npm run test:coverage
+      working-directory: test/ui
+
+    - name: Upload UI coverage to Codecov
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: test/ui/coverage/lcov.info
+        flags: frontend
+        name: ui-tests
+        disable_search: true
+        fail_ci_if_error: false
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      pull-requests: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        bucket:
+          - name: Unit
+            filter: "Category!=Security"
+          - name: Security
+            filter: "Category=Security"
+
+    name: "Tests (${{ matrix.bucket.name }})"
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+      with:
+        global-json-file: global.json
+
+    - name: Restore
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --configuration Release --no-restore
+
+    - name: "Run ${{ matrix.bucket.name }} tests"
+      env:
+        TEST_FILTER: ${{ matrix.bucket.filter }}
+        # The dedicated ui-tests job above owns the Vitest suite; running it
+        # again inside every bucket would triple the runtime for no signal.
+        RunVitest: "false"
+      run: |
+        dotnet test --configuration Release --no-build --verbosity normal \
+          --filter "$TEST_FILTER" \
+          --logger "trx;LogFileName=${{ matrix.bucket.name }}.trx" \
+          --collect:"XPlat Code Coverage" \
+          --results-directory "./TestResults/${{ matrix.bucket.name }}"
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: test-results-${{ matrix.bucket.name }}
+        path: "**/TestResults/**/*.trx"
+        retention-days: 7
+
+    # `--collect:"XPlat Code Coverage"` writes to a GUID subfolder we can't name
+    # ahead of time. Flatten it to a fixed path so Codecov gets an exact file and
+    # we don't depend on glob expansion behaviour in the action.
+    - name: Collect coverage report
+      if: always()
+      run: |
+        set -euo pipefail
+        src=$(find "./TestResults/${{ matrix.bucket.name }}" -name 'coverage.cobertura.xml' | head -n1)
+        if [ -n "$src" ]; then
+          cp "$src" "./coverage.${{ matrix.bucket.name }}.cobertura.xml"
+          echo "COVERAGE_FILE=./coverage.${{ matrix.bucket.name }}.cobertura.xml" >> "$GITHUB_ENV"
+        else
+          echo "::warning::No coverage report found for the ${{ matrix.bucket.name }} bucket."
+        fi
+
+    # All backend buckets upload under the same `backend` flag, so Codecov merges
+    # Unit/Security into one meaningful figure instead of three
+    # low-percentage flags. Skipped when the collect step found no report (e.g.
+    # the Performance bucket soft-failed before producing one).
+    - name: Upload coverage to Codecov
+      if: always() && env.COVERAGE_FILE != ''
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ${{ env.COVERAGE_FILE }}
+        flags: backend
+        name: ${{ matrix.bucket.name }}
+        disable_search: true
+        fail_ci_if_error: false
+
+  # Dedicated SonarCloud analysis. Requires single begin -> build -> test -> end in one job,
+  # so it cannot use the test matrix above.
+  sonar:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SONAR_PROJECT_KEY: JellyPlugins_jellyfin-watchback
+      SONAR_ORG: jellyplugins
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # UI coverage is reported to Codecov by the ui-tests job, not Sonar.
+      RunVitest: "false"
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        # Full history lets SonarCloud attribute issues to blame/authors and compute new-code
+        # periods accurately.
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+      with:
+        global-json-file: global.json
+
+    # SonarScanner for .NET is a JVM tool.
+    - name: Setup JDK
+      uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+      with:
+        distribution: temurin
+        # renovate: datasource=java-version depName=java versioning=docker
+        java-version: 25.0.5+8.0.LTS
+
+    - name: Install SonarScanner tool
+      env:
+        # renovate: datasource=nuget depName=dotnet-sonarscanner
+        SONARSCANNER_VERSION: 12.1.0
+      # Pinned: an unpinned `dotnet tool install` pulls whatever is newest at run
+      # time, so a scanner release could turn a PR red without a single commit.
+      run: dotnet tool install --global dotnet-sonarscanner --version "$SONARSCANNER_VERSION"
+
+    - name: SonarCloud analysis
+      # No secret -> skip cleanly (forks / when SONAR_TOKEN is not yet configured) instead of
+      # failing the whole PR check.
+      if: ${{ env.SONAR_TOKEN != '' }}
+      run: |
+        set -euo pipefail
+        # Coverage is imported from the C# unit-test run only. E2E, PluginPages and demo have no
+        # instrumentation, so exclusions prevent 0% scores. They stay in normal analysis, only
+        # coverage denominator is affected. Generated configPage.html and docs/ are dropped entirely.
+        # test/ui is excluded completely: it is a JavaScript test surface (Vitest) with its own
+        # Codecov upload, and Sonar would treat it as un-instrumented product code.
+        #
+        # sonar.tests marks the xUnit project and the E2E harness as TEST sources rather than
+        # production code, so SonarCloud applies its (much lighter) test rule set to them instead
+        # of production rules like CA2000/CA5394/CA1861 analysing test code with production rules
+        # is noise. Real test-quality issues (missing asserts, Thread.Sleep) still surface.
+        dotnet sonarscanner begin \
+          /k:"$SONAR_PROJECT_KEY" \
+          /o:"$SONAR_ORG" \
+          /d:sonar.host.url="https://sonarcloud.io" \
+          /d:sonar.token="$SONAR_TOKEN" \
+          /d:sonar.tests="Jellyfin.Plugin.Watchback.Tests,test/e2e" \
+          /d:sonar.exclusions="**/PluginPages/configPage.html,docs/**,test/ui/**,**/bin/**,**/obj/**,**/node_modules/**" \
+          /d:sonar.coverage.exclusions="test/e2e/**,test/ui/**,**/PluginPages/js/**,**/PluginPages/css/**,**/PluginPages/configPage.html,Jellyfin.Plugin.Watchback/js/**,docs/**" \
+          /d:sonar.cs.cobertura.reportsPaths="**/coverage.cobertura.xml"
+        dotnet build --configuration Release --no-incremental
+        dotnet test --configuration Release --no-build --verbosity normal \
+          --collect:"XPlat Code Coverage" \
+          --results-directory "./TestResults/Sonar"
+        dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+  # Keeps the README E2E-count badge in sync automatically. xUnit/UI counts come from
+  # Codecov, so the only hand-maintained count left is the Playwright suite. Discovery is
+  # deliberately split from the badge push: `--list` evaluates PR-controlled spec files,
+  # so it runs read-only with no persisted credentials. Only the validated number crosses
+  # into the write-enabled job, which never loads PR code.
+  e2e-test-count:
+    # Same-repo PRs only: fork PRs get a read-only GITHUB_TOKEN and cannot push, so the guard
+    # skips them cleanly rather than failing. Never runs on push:main.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      count: ${{ steps.count.outputs.count }}
+
+    steps:
+    - name: Checkout PR head commit
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        # Check out the PR's head commit (not the branch name): fetching by SHA avoids
+        # the "couldn't find remote ref" failures that occur when a branch name is
+        # passed as `ref` (e.g. after the branch was renamed/deleted or on forks).
+        ref: ${{ github.event.pull_request.head.sha }}
+        # PR-controlled test code runs below: never leave the token in .git/config.
+        persist-credentials: false
+
+    - name: Setup Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: .nvmrc
+
+    - name: Install E2E test dependencies
+      run: npm ci --ignore-scripts --no-audit --no-fund
+      working-directory: test/e2e
+
+    - name: Count Playwright tests
+      id: count
+      run: |
+        set -euo pipefail
+        # `--list` resolves every project/test file and prints "Total: <n> tests in <m> files"
+        # as its last line; no Docker stack or browser is needed for that.
+        count=$(cd test/e2e && npx --no-install playwright test --list | tail -n 1 | grep -oE '[0-9]+' | head -n 1)
+
+        if ! [[ "$count" =~ ^[0-9]+$ ]] || [ "$count" -eq 0 ]; then
+          echo "::error::Could not read the Playwright test count (badge not updated)."
+          exit 1
+        fi
+
+        echo "Counted $count Playwright tests."
+        echo "count=$count" >> "$GITHUB_OUTPUT"
+
+  test-badge:
+    needs: e2e-test-count
+    # Same-repo PRs only: fork PRs get a read-only GITHUB_TOKEN and cannot push.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      # Job outputs are strings; re-validate in the write-enabled job before using it.
+      COUNT: ${{ needs.e2e-test-count.outputs.count }}
+
+    steps:
+    - name: Checkout PR head commit
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        # Check out the PR's head commit by SHA (not the branch name) so the initial
+        # fetch does not depend on the branch still existing under its original name.
+        # The later `git push` still targets the PR branch via PR_HEAD_REF.
+        ref: ${{ github.event.pull_request.head.sha }}
+        # persist-credentials defaults to true here (unlike discovery) so the later
+        # `git push` can authenticate with the workflow token.
+
+    - name: Update badge
+      run: |
+        set -euo pipefail
+        if ! [[ "$COUNT" =~ ^[0-9]+$ ]] || [ "$COUNT" -eq 0 ]; then
+          echo "::error::Discovery job returned an invalid test count."
+          exit 1
+        fi
+
+        sed -i -E "s|(e2e%20tests-)[0-9]+|\1${COUNT}|" README.md
+
+    - name: Commit badge if changed
+      env:
+        # Pass the branch name via env, never interpolated directly into the shell script:
+        # a crafted same-repo branch name could otherwise inject commands (this job has write).
+        PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      run: |
+        set -euo pipefail
+        if git diff --quiet -- README.md; then
+          echo "E2E-count badge already at ${COUNT}: nothing to commit."
+          exit 0
+        fi
+
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add README.md
+        # [skip ci] prevents the pushed commit from re-triggering this workflow (no loop).
+        git commit -m "chore: update e2e test count badge to ${COUNT} [skip ci]"
+        git push origin "HEAD:${PR_HEAD_REF}"
+
+  # Deploy a live preview of the dashboard demo for this PR
+  demo-preview:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The preview publisher (rossjrw/pr-preview-action) uses ${{ secrets.GITHUB_TOKEN }}
+          # explicitly; do not persist the token in local git config to reduce blast radius
+          # of the repo-controlled PowerShell demo-site prep step.
+          persist-credentials: false
+
+      - name: Prepare demo site
+        shell: pwsh
+        run: ./.github/scripts/prepare-demo-site.ps1
+
+      - name: Validate demo entrypoint
+        shell: pwsh
+        run: |
+          if (-not (Test-Path './docs/index.html')) {
+            throw 'PR preview requires docs/index.html in the branch being tested.'
+          }
+
+      - name: Deploy PR preview
+        uses: rossjrw/pr-preview-action@873417d2df72380da1f3978378fb58560bcde976 # v1.8.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          source-dir: ./docs
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          action: auto
+
+      - name: Add preview URL to job summary
+        if: success()
+        shell: pwsh
+        run: |
+          $previewUrl = 'https://jellyplugins.github.io/jellyfin-watchback/pr-preview/pr-${{ github.event.pull_request.number }}/'
+          @(
+            '## PR demo preview'
+            ''
+            "- Expected URL: $previewUrl"
+            '- GitHub Pages must be configured to serve `gh-pages` from the repository root.'
+            '- If Pages was just enabled, wait a minute and re-run the workflow once.'
+          ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY

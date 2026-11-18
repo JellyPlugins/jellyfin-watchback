@@ -1,0 +1,287 @@
+using Jellyfin.Plugin.Watchback.Configuration;
+using Jellyfin.Plugin.Watchback.Services.ConfigAccess;
+using Xunit;
+
+namespace Jellyfin.Plugin.Watchback.Tests.Services.ConfigAccess;
+
+/// <summary>
+///     Tests for PluginConfigurationService. The service depends on the Plugin.Instance singleton - a piece of process-wide state that other tests may leave in either the initialised or the uninitialised state.
+/// </summary>
+public class PluginConfigurationServiceTests
+{
+    /// <summary>
+    ///     Deterministic accessor stub - replaces the real Plugin.Instance lookup with fields we control, so the tests are independent of process-wide singleton state and can be run in parallel without racing against any other suite.
+    /// </summary>
+    private sealed class FakePluginAccessor : PluginConfigurationService.IPluginAccessor
+    {
+        private readonly Queue<Exception> _saveFailures = new();
+
+        public bool IsInitialized { get; set; }
+        public string? Version { get; set; }
+        public PluginConfiguration? Configuration { get; set; }
+        public int SaveCallCount { get; private set; }
+
+        public void SaveConfiguration()
+        {
+            SaveCallCount++;
+            if (_saveFailures.TryDequeue(out var failure))
+            {
+                throw failure;
+            }
+        }
+
+        public void FailNextSaves(Exception failure, int times)
+        {
+            for (var i = 0; i < times; i++)
+            {
+                _saveFailures.Enqueue(failure);
+            }
+        }
+    }
+
+    [Fact]
+    public void IsInitialized_TrueWhenAccessorReportsInitialized()
+    {
+        var sut = new PluginConfigurationService(new FakePluginAccessor { IsInitialized = true });
+        Assert.True(sut.IsInitialized);
+    }
+
+    [Fact]
+    public void IsInitialized_FalseWhenAccessorReportsUninitialized()
+    {
+        var sut = new PluginConfigurationService(new FakePluginAccessor { IsInitialized = false });
+        Assert.False(sut.IsInitialized);
+    }
+
+    [Fact]
+    public void GetConfiguration_ReturnsLiveConfiguration_WhenInitialized()
+    {
+        // Deterministic via the fake accessor: no Plugin.Instance singleton, so
+        // parallel suites can neither pollute nor null it mid-assertion.
+        var owned = new PluginConfiguration { Language = "de" };
+        var sut = new PluginConfigurationService(new FakePluginAccessor { IsInitialized = true, Configuration = owned });
+
+        Assert.Same(owned, sut.GetConfiguration());
+        Assert.Null(Record.Exception(() => sut.SaveConfiguration()));
+    }
+
+    [Fact]
+    public void PluginVersion_ReturnsAccessorVersionWhenPresent()
+    {
+        var sut = new PluginConfigurationService(new FakePluginAccessor { Version = "1.2.3-test" });
+        Assert.Equal("1.2.3-test", sut.PluginVersion);
+    }
+
+    [Fact]
+    public void PluginVersion_FallsBackToUnknownWhenAccessorHasNoVersion()
+    {
+        var sut = new PluginConfigurationService(new FakePluginAccessor { Version = null });
+        Assert.Equal("unknown", sut.PluginVersion);
+    }
+
+    [Fact]
+    public void GetConfiguration_ReturnsAccessorConfigurationWhenAvailable()
+    {
+        var owned = new PluginConfiguration { Language = "de", YearlyRewindEnabled = true };
+        var sut = new PluginConfigurationService(new FakePluginAccessor { IsInitialized = true, Configuration = owned });
+
+        var cfg = sut.GetConfiguration();
+
+        // Same reference - the service returns the live shared object so callers have the
+        // authoritative view. Mutation must go through ReadAndMutate, not via this reference.
+        Assert.Same(owned, cfg);
+        Assert.Equal("de", cfg.Language);
+        Assert.True(cfg.YearlyRewindEnabled);
+    }
+
+    [Fact]
+    public void GetConfiguration_ThrowsWhenNotInitialized()
+    {
+        // When the plugin singleton has not yet been created, GetConfiguration must
+        // throw rather than return a silent default that could mask a startup-ordering bug.
+        var sut = new PluginConfigurationService(new FakePluginAccessor { IsInitialized = false, Configuration = null });
+
+        Assert.Throws<InvalidOperationException>(() => sut.GetConfiguration());
+    }
+
+    [Fact]
+    public void GetConfiguration_ThrowsWhenAccessorIsUninitialised_DefaultFakeState()
+    {
+        // Confirm the default FakePluginAccessor (IsInitialized=false) also triggers the guard.
+        var sut = new PluginConfigurationService(new FakePluginAccessor());
+        Assert.Throws<InvalidOperationException>(() => sut.GetConfiguration());
+    }
+
+    [Fact]
+    public void SaveConfiguration_ForwardsToAccessorWhenInitialized()
+    {
+        var accessor = new FakePluginAccessor { IsInitialized = true };
+        var sut = new PluginConfigurationService(accessor);
+
+        sut.SaveConfiguration();
+        sut.SaveConfiguration();
+
+        // Every call must be forwarded - the service must not deduplicate or throttle.
+        Assert.Equal(2, accessor.SaveCallCount);
+    }
+
+    [Fact]
+    public void SaveConfiguration_ForwardsToAccessorEvenWhenUninitialized()
+    {
+        // Contract: the service forwards unconditionally; the ACCESSOR decides whether an uninitialised plugin means "no-op" or "throw".
+        var accessor = new FakePluginAccessor { IsInitialized = false };
+        var sut = new PluginConfigurationService(accessor);
+
+        var ex = Record.Exception(() => sut.SaveConfiguration());
+
+        Assert.Null(ex);
+        Assert.Equal(1, accessor.SaveCallCount);
+    }
+
+    [Fact]
+    public void Constructor_RejectsNullAccessor()
+    {
+        Assert.Throws<ArgumentNullException>(
+            () => new PluginConfigurationService(accessor: null!));
+    }
+
+    [Fact]
+    public void ParameterlessConstructor_UsesRealPluginAccessor_WithoutThrowing()
+    {
+        // Smoke test for the production wiring path. Construction must not throw regardless of whether Plugin.Instance has been set by a parallel test.
+        var sut = new PluginConfigurationService();
+
+        // Construction must succeed regardless of Plugin.Instance state.
+        // IsInitialized reflects whether Plugin.Instance is non-null at construction time.
+        Assert.Equal(Plugin.Instance != null, sut.IsInitialized);
+        Assert.False(string.IsNullOrWhiteSpace(sut.PluginVersion));
+    }
+
+    [Fact]
+    public void ReadAndMutate_ThrowsArgumentNullException_WhenMutateIsNull()
+    {
+        // The null-guard must fire before the lock and before any save, so a caller
+        // passing a null delegate can never accidentally persist an unchanged config.
+        var accessor = new FakePluginAccessor { Configuration = new PluginConfiguration() };
+        var sut = new PluginConfigurationService(accessor);
+
+        Assert.Throws<ArgumentNullException>(() => sut.ReadAndMutate(null!));
+        Assert.Equal(0, accessor.SaveCallCount);
+    }
+
+    [Fact]
+    public void ReadAndMutate_NoOps_WhenConfigurationIsNull()
+    {
+        // Plugin not initialised: there is nothing to mutate, so the delegate must not
+        // run and no save may happen - an early return, not a silent write of a null.
+        var accessor = new FakePluginAccessor { Configuration = null };
+        var sut = new PluginConfigurationService(accessor);
+
+        var mutateInvoked = false;
+        sut.ReadAndMutate(_ => mutateInvoked = true);
+
+        Assert.False(mutateInvoked);
+        Assert.Equal(0, accessor.SaveCallCount);
+    }
+
+    [Fact]
+    public void ReadAndMutate_InvokesMutateThenSaves_WhenConfigurationPresent()
+    {
+        // The delegate must receive the live shared config object (so edits stick), and
+        // the save must follow the mutation exactly once to persist it atomically.
+        var config = new PluginConfiguration { Language = "en" };
+        var accessor = new FakePluginAccessor { Configuration = config };
+        var sut = new PluginConfigurationService(accessor);
+
+        PluginConfiguration? received = null;
+        sut.ReadAndMutate(c =>
+        {
+            received = c;
+            c.Language = "fr";
+        });
+
+        Assert.Same(config, received);
+        Assert.Equal("fr", config.Language);
+        Assert.Equal(1, accessor.SaveCallCount);
+    }
+
+    [Fact]
+    public void ReadAndMutate_DoesNotSave_WhenMutateThrows()
+    {
+        // A failed mutation must propagate and must not persist a partially-applied config.
+        var accessor = new FakePluginAccessor { Configuration = new PluginConfiguration() };
+        var sut = new PluginConfigurationService(accessor);
+
+        Assert.Throws<InvalidOperationException>(
+            () => sut.ReadAndMutate(_ => throw new InvalidOperationException("boom")));
+        Assert.Equal(0, accessor.SaveCallCount);
+    }
+
+    [Fact]
+    public void ReadAndMutate_RetriesSave_WhenAccessorThrowsTransientIOException()
+    {
+        // Concurrent writers can collide on Jellyfin's FileShare.None config file.
+        // Transient IOExceptions must be retried without re-running the mutation.
+        var accessor = new FakePluginAccessor { Configuration = new PluginConfiguration { Language = "en" } };
+        accessor.FailNextSaves(new IOException("sharing violation"), 2);
+        var sut = new PluginConfigurationService(accessor);
+
+        var mutateCount = 0;
+        sut.ReadAndMutate(c =>
+        {
+            mutateCount++;
+            c.Language = "fr";
+        });
+
+        Assert.Equal(1, mutateCount);
+        Assert.Equal("fr", accessor.Configuration!.Language);
+        Assert.Equal(3, accessor.SaveCallCount);
+    }
+
+    [Fact]
+    public void ReadAndMutate_RetriesSave_WhenAccessorThrowsTransientUnauthorizedAccess()
+    {
+        // AV scanners and indexers surface transient locks as access denials too.
+        var accessor = new FakePluginAccessor { Configuration = new PluginConfiguration { Language = "en" } };
+        accessor.FailNextSaves(new UnauthorizedAccessException("locked"), 2);
+        var sut = new PluginConfigurationService(accessor);
+
+        var mutateCount = 0;
+        sut.ReadAndMutate(c =>
+        {
+            mutateCount++;
+            c.Language = "fr";
+        });
+
+        Assert.Equal(1, mutateCount);
+        Assert.Equal("fr", accessor.Configuration!.Language);
+        Assert.Equal(3, accessor.SaveCallCount);
+    }
+
+    [Fact]
+    public void ReadAndMutate_Rethrows_WhenSaveKeepsFailing()
+    {
+        // Retries are bounded: a persistently locked file must surface instead of looping forever.
+        var accessor = new FakePluginAccessor { Configuration = new PluginConfiguration() };
+        accessor.FailNextSaves(new IOException("locked"), 10);
+        var sut = new PluginConfigurationService(accessor);
+
+        var mutateCount = 0;
+        Assert.Throws<IOException>(() => sut.ReadAndMutate(_ => mutateCount++));
+
+        Assert.Equal(1, mutateCount);
+        Assert.Equal(3, accessor.SaveCallCount);
+    }
+
+    [Fact]
+    public void ReadAndMutate_DoesNotRetry_WhenSaveThrowsNonIOException()
+    {
+        // Only transient file-lock failures are retried; anything else propagates immediately.
+        var accessor = new FakePluginAccessor { Configuration = new PluginConfiguration() };
+        accessor.FailNextSaves(new InvalidOperationException("boom"), 10);
+        var sut = new PluginConfigurationService(accessor);
+
+        Assert.Throws<InvalidOperationException>(() => sut.ReadAndMutate(_ => { }));
+        Assert.Equal(1, accessor.SaveCallCount);
+    }
+}

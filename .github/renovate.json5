@@ -1,0 +1,245 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    "helpers:pinGitHubActionDigests"
+  ],
+
+  "timezone": "Europe/Berlin",
+  "rangeStrategy": "pin",
+
+  "schedule": ["at any time"],
+  "prHourlyLimit": 0,
+  "prConcurrentLimit": 10,
+  "branchConcurrentLimit": 0,
+
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "labels": ["dependencies"],
+  "rebaseWhen": "conflicted",
+
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
+
+  "dependencyDashboard": {
+    "enabled": true,
+    "title": "Dependency Dashboard",
+    "labels": ["dependencies", "dashboard"],
+    "osvVulnerabilitySummary": "unresolved"
+  },
+  "osvVulnerabilityAlerts": true,
+
+  "ignorePaths": [
+    "**/bin/**",
+    "**/obj/**",
+    "**/node_modules/**",
+    "graphify-out/**",
+    "docs/mock/**"
+  ],
+
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"],
+    "commitMessageAction": "Refresh lock files"
+  },
+
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["dependencies", "security"],
+    "minimumReleaseAge": null,
+    "schedule": ["at any time"]
+  },
+
+  "packageRules": [
+    // 1. Jellyfin server surface - NuGet packages AND the e2e server image
+    {
+      "description": "Jellyfin server dependencies (NuGet + e2e container image)",
+      "matchDatasources": ["nuget", "docker"],
+      "matchPackageNames": ["/^Jellyfin\\./", "jellyfin/jellyfin"],
+      "groupName": "Jellyfin Dependencies",
+      "semanticCommitScope": "jellyfin",
+      "labels": ["dependencies", "jellyfin"],
+      "separateMajorMinor": true
+    },
+
+    // 2. C# test stack
+    {
+      "description": "C# unit test libraries",
+      "matchDatasources": ["nuget"],
+      "matchPackageNames": [
+        "/^xunit/",
+        "/^coverlet\\./",
+        "Microsoft.NET.Test.Sdk",
+        "Moq"
+      ],
+      "groupName": "Test Dependencies (C#)",
+      "semanticCommitScope": "test"
+    },
+
+    // 3. Roslyn analyzers
+    {
+      "description": "Roslyn analyzers (build-time, can break TreatWarningsAsErrors)",
+      "matchDatasources": ["nuget"],
+      "matchPackageNames": [
+        "StyleCop.Analyzers",
+        "SerilogAnalyzer",
+        "SmartAnalyzers.MultithreadingAnalyzer"
+      ],
+      "groupName": "Analyzers (C#)",
+      "semanticCommitScope": "analyzers"
+    },
+    {
+      "description": "StyleCop ships only prereleases on 1.2.x - allow them",
+      "matchDatasources": ["nuget"],
+      "matchPackageNames": ["StyleCop.Analyzers"],
+      "ignoreUnstable": false
+    },
+
+    // 4. .NET SDK pin (global.json) - Generically restricted to even major versions (LTS lines)
+    {
+      "description": ".NET SDK pin in global.json (Even major versions / LTS only)",
+      "matchDatasources": ["dotnet-version"],
+      "matchPackageNames": ["dotnet-sdk"],
+      "allowedVersions": "/^v?(?:[0-9]+[02468]|[02468])\\./",
+      "groupName": ".NET SDK",
+      "semanticCommitScope": "dotnet",
+      "labels": ["dependencies", "dotnet-sdk"],
+      "addLabels": ["needs-manual-check"],
+      "prBodyNotes": [
+        "> [!NOTE]",
+        "> Enterprise Policy: .NET SDK upgrades are dynamically restricted to even-numbered major releases (LTS baseline)."
+      ]
+    },
+
+    // 5. Node test harnesses (test/ui = Vitest, test/e2e = Playwright)
+    {
+      "description": "UI & E2E test dependencies (Node)",
+      "matchManagers": ["npm"],
+      "groupName": "UI & E2E Test Dependencies (Node)",
+      "semanticCommitScope": "test",
+      "postUpdateOptions": ["npmDedupe"]
+    },
+    {
+      "description": "Never touch engines ranges",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["engines"],
+      "enabled": false
+    },
+    {
+      "description": "Playwright bumps also need the browser image refreshed - keep separate",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^@playwright\\//", "playwright"],
+      "groupName": "Playwright",
+      "semanticCommitScope": "test"
+    },
+
+    // 6. Infrastructure & CI
+    {
+      "description": "Docker & CI infrastructure",
+      "matchManagers": ["dockerfile", "docker-compose", "github-actions"],
+      "groupName": "Infrastructure & CI",
+      "semanticCommitScope": "ci",
+      "labels": ["dependencies", "ci"]
+    },
+    {
+      "description": "Keep the Jellyfin e2e image in the Jellyfin group",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["jellyfin/jellyfin"],
+      "groupName": "Jellyfin Dependencies",
+      "semanticCommitScope": "jellyfin",
+      "labels": ["dependencies", "jellyfin"]
+    },
+    {
+      "description": "GitHub Action digest refreshes are noise - batch them",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest", "pin", "pinDigest"],
+      "groupName": "Infrastructure & CI",
+      "semanticCommitScope": "ci",
+      "automerge": false
+    },
+    {
+      "description": "Node runtime (.nvmrc) - restrict to even major versions (LTS)",
+      "matchManagers": ["nvm"],
+      "allowedVersions": "/^v?(?:[0-9]+[02468]|[02468])\\./",
+      "groupName": "Node runtime",
+      "semanticCommitScope": "ci",
+      "labels": ["dependencies", "ci"],
+      "addLabels": ["needs-manual-check"],
+      "prBodyNotes": [
+        "> [!NOTE]",
+        "> Enterprise Policy: Node.js runtime upgrades are dynamically restricted to even-numbered major releases (LTS baseline)."
+      ]
+    },
+    {
+      // Java / JDK: Dynamic regex matching 2-year / 4-version LTS releases starting at 21
+      "description": "Java / JDK for the SonarCloud scanner (LTS only)",
+      "matchDepNames": ["java"],
+      "allowedVersions": "/^v?(?:[2468][159]|[3579][37]|[1-9][0-9]*(?:[02468][159]|[13579][37]))(?:\\.|\\+|-|$)/",
+      "groupName": "Java (SonarCloud scanner)",
+      "semanticCommitScope": "ci",
+      "labels": ["dependencies", "ci"],
+      "addLabels": ["needs-manual-check"],
+      "prBodyNotes": [
+        "> [!NOTE]",
+        "> Enterprise Policy: JDK upgrades are restricted to LTS versions. This JDK only runs SonarScanner for .NET in `pr.yml`."
+      ]
+    },
+    {
+      "description": "SonarScanner for .NET",
+      "matchDepNames": ["dotnet-sonarscanner"],
+      "groupName": "Infrastructure & CI",
+      "semanticCommitScope": "ci",
+      "labels": ["dependencies", "ci"]
+    },
+    {
+      "description": "yq release binary - checksum must be updated by hand",
+      "matchDepNames": ["mikefarah/yq"],
+      "groupName": "Infrastructure & CI",
+      "semanticCommitScope": "ci",
+      "labels": ["dependencies", "ci"],
+      "addLabels": ["needs-manual-check"],
+      "dependencyDashboardApproval": true,
+      "prBodyNotes": [
+        "> [!WARNING]",
+        "> `YQ_SHA256` in `.github/workflows/release.yml` is **not** updated by this PR.",
+        "> Compute it before merging, otherwise the release workflow aborts at the checksum gate:",
+        "> `curl -fsSL https://github.com/mikefarah/yq/releases/download/<new-tag>/yq_linux_amd64 | sha256sum`"
+      ]
+    },
+
+    // 7. Global rule for ALL other majors (forces PRs and the major label)
+    {
+      "description": "Surface majors individually",
+      "matchUpdateTypes": ["major"],
+      "addLabels": ["major-update"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      // Last so preset and manager-specific rules cannot restore version ranges.
+      "description": "Always use exact dependency versions, never caret or tilde ranges",
+      "matchPackageNames": ["*"],
+      "rangeStrategy": "pin"
+    }
+  ],
+
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Versions explicitly annotated with a `# renovate:` comment",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/.+\\.ya?ml$/",
+        "/^\\.github/scripts/.+\\.ps1$/",
+        "/^test/e2e/scripts/.+\\.sh$/",
+        "/^scripts/.+\\.ps1$/",
+        "/^build\\.yaml$/"
+      ],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+?)\\s+depName=(?<depName>[^\\s]+?)(?:\\s+versioning=(?<versioning>[^\\s]+?))?\\s*\\n[^\\n]*?[:=]\\s*[\"']?(?<currentValue>[^\"'\\s]+)[\"']?"
+      ],
+      "versioningTemplate": "{{#if versioning}}{{{versioning}}}{{else}}semver{{/if}}"
+    }
+  ]
+}
