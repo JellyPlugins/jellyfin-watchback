@@ -99,6 +99,7 @@ internal sealed class UserActivityHistoryStore
     {
         if (history.SchemaVersion != 2 || history.Metadata is null || history.Sessions is null || history.Coverage is null || history.Observations is null || history.ImportedPlayback is null
             || (history.MusicRecordingStartedAtUtc.HasValue && history.MusicRecordingStartedAtUtc.Value.Offset != TimeSpan.Zero)
+            || (history.PlaybackReportingMusicImportCompleted && !history.MusicRecordingStartedAtUtc.HasValue)
             || (history.PlaybackReportingImportCompleted && !history.PlaybackReportingBeforeUtc.HasValue)
             || (history.PlaybackReportingBeforeUtc.HasValue && history.PlaybackReportingBeforeUtc.Value.Offset != TimeSpan.Zero)
             || history.Metadata.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Value is null || pair.Value.ItemId == Guid.Empty
@@ -115,7 +116,7 @@ internal sealed class UserActivityHistoryStore
             if (row is null || string.IsNullOrWhiteSpace(row.SourceKey) || row.MetadataKey is null || !history.Metadata.TryGetValue(row.MetadataKey, out var item)
                 || row.StartedAtUtc.Offset != TimeSpan.Zero || row.ImportedAtUtc.Offset != TimeSpan.Zero || row.StartedAtUtc >= row.ImportedAtUtc
                 || item.ItemType is not ("Movie" or "Episode" or "Audio") || !double.IsFinite(row.ActiveSeconds) || row.ActiveSeconds <= 0
-                || (history.PlaybackReportingBeforeUtc.HasValue && row.StartedAtUtc >= history.PlaybackReportingBeforeUtc))
+                || (history.PlaybackReportingBoundary(item.ItemType).HasValue && row.StartedAtUtc >= history.PlaybackReportingBoundary(item.ItemType)))
             {
                 throw new InvalidDataException("Invalid imported Playback Reporting entry.");
             }

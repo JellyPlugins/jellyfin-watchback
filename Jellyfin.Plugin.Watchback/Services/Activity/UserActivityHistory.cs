@@ -33,12 +33,23 @@ internal sealed class UserActivityHistory
 
     public bool PlaybackReportingImportCompleted { get; set; }
 
+    // Video-only installations have not checked audio history yet.
+    public bool PlaybackReportingMusicImportCompleted { get; set; }
+
     public Collection<ImportedPlayback> ImportedPlayback { get; init; } = [];
+
+    internal bool PlaybackReportingImportsCompleted => PlaybackReportingImportCompleted && PlaybackReportingMusicImportCompleted;
+
+    internal DateTimeOffset? PlaybackReportingBoundary(string itemType)
+        => itemType == "Audio" ? MusicRecordingStartedAtUtc ?? PlaybackReportingBeforeUtc : PlaybackReportingBeforeUtc;
+
+    internal bool IsPlaybackReportingImportCompleted(string itemType)
+        => itemType == "Audio" ? PlaybackReportingMusicImportCompleted : PlaybackReportingImportCompleted;
 
     internal bool Import(PlaybackReportingReader.Entry entry, UserPlaybackItem item, DateTimeOffset now)
     {
-        var boundary = PlaybackReportingBeforeUtc ?? Coverage.Select(period => (DateTimeOffset?)period.StartUtc).Min() ?? now;
-        if (PlaybackReportingImportCompleted || entry.StartedAtUtc >= boundary)
+        var boundary = PlaybackReportingBoundary(item.ItemType) ?? Coverage.Select(period => (DateTimeOffset?)period.StartUtc).Min() ?? now;
+        if (IsPlaybackReportingImportCompleted(item.ItemType) || entry.StartedAtUtc >= boundary)
         {
             return false;
         }

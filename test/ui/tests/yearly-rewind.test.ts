@@ -309,11 +309,13 @@ const musicReport = (overrides: Record<string, any> = {}) => ({
  { StartUtc: '2026-02-01T00:00:00Z', ActiveSeconds: 0, EstimatedSeconds: 0, Genres: [] }], ...overrides
 });
 
-test('music is optional and old frozen reports have no music section', async () => {
+test.each([undefined, {Items: []}])('music content is absent from old or empty reports (%j)', async music => {
+ extra = music === undefined ? {} : {Music: music};
  loadYearlyRewindBundle(); await flush();
- expect(root.querySelector('.jfw-rewind-music')).toBeNull();
- extra = { Music: { Items: [] } }; mount(root); await flush();
- expect(root.querySelector('.jfw-rewind-music')).toBeNull();
+ for (const selector of ['.jfw-rewind-top-tracks', '.jfw-rewind-music-genres', '.jfw-rewind-music-months', '.jfw-rewind-stats-music']) {
+  expect(root.querySelector(selector)).toBeNull();
+ }
+ expect(root.querySelectorAll('.jfw-rewind-stat')).toHaveLength(5);
 });
 
 test('music ranks five tracks by listening time and renders safe independent totals and charts', async () => {
@@ -399,4 +401,24 @@ test.each([undefined, {ActiveSeconds: 3600}])('missing historical music counts s
  const rows = root.querySelectorAll('.jfw-rewind-comparison-table tbody tr');
  expect(rows[6].textContent).toContain('Tracks7——');
  expect(rows[7].textContent).toContain('Music plays28——');
+});
+
+
+test('retained music comparisons render without a video comparison', async () => {
+ extra = { DataState: 'NotCollected', Items: [], Comparison: null, Music: musicReport({ Comparison: {
+  PeriodStartUtc: '2024-12-15T00:00:00Z', SnapshotAtUtc: '2025-12-15T00:00:00Z', TimeZoneId: 'UTC',
+  DataState: 'Partial', ActiveSeconds: 7200, TrackCount: 4, PlayCount: 10
+ } }) };
+ loadYearlyRewindBundle(); await flush();
+ const rows = root.querySelectorAll('.jfw-rewind-comparison-table tbody tr');
+ expect(rows).toHaveLength(8);
+ for (const row of Array.from(rows).slice(0, 5)) {
+  expect(Array.from(row.querySelectorAll('td'), cell => cell.textContent)).toEqual(['—', '—', '—']);
+ }
+ expect(Array.from(rows[5].querySelectorAll('td'), cell => cell.textContent)).toEqual(['4.7', '2', '+2.7 (+133.3%)']);
+ expect(Array.from(rows[6].querySelectorAll('td'), cell => cell.textContent)).toEqual(['7', '4', '+3 (+75%)']);
+ expect(Array.from(rows[7].querySelectorAll('td'), cell => cell.textContent)).toEqual(['28', '10', '+18 (+180%)']);
+ expect(root.querySelector('.jfw-rewind-comparison')?.textContent).toContain('12/15/2024 – 12/14/2025');
+ expect(root.querySelector('.jfw-rewind-comparison')?.textContent).not.toContain('No report for the preceding period');
+ expect(root.querySelector('.jfw-rewind-comparison')?.textContent).not.toContain('Previous top genre');
 });

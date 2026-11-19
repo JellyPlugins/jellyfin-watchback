@@ -113,7 +113,8 @@ public sealed class YearlyRewindService : IUserActivityHistoryConsumer
             {
                 var facts = history(userId);
                 var start = YearlyRewindWindow.PeriodStart(cutoff, config.YearlyRewindStartDate, TimeZoneInfo.Local);
-                var importsReady = historyReady || facts.PlaybackReportingBeforeUtc <= start;
+                var importsReady = historyReady || ((facts.PlaybackReportingImportCompleted || facts.PlaybackReportingBeforeUtc <= start)
+                    && (facts.PlaybackReportingMusicImportCompleted || facts.PlaybackReportingBoundary("Audio") <= start));
                 if (importsReady && (current is not null || facts.Coverage.Any(period => period.StartUtc < cutoff)
                     || YearlyRewindAggregator.EligibleImports(facts, start, cutoff, now).Any()
                     || facts.Observations.Any(row => row.LastPlayedAtUtc < cutoff)

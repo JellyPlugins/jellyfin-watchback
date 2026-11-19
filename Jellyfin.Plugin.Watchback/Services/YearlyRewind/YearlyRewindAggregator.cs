@@ -33,6 +33,7 @@ internal static class YearlyRewindAggregator
             Observations = new Collection<UserPlaybackObservation>(history.Observations.Where(row => Matches(row.Item)).ToArray()),
             ImportedPlayback = new Collection<ImportedPlayback>(history.ImportedPlayback.Where(row => Matches(row.Item)).ToArray()),
             PlaybackReportingBeforeUtc = history.PlaybackReportingBeforeUtc,
+            MusicRecordingStartedAtUtc = history.MusicRecordingStartedAtUtc,
             Coverage = new Collection<UserActivityCoverage>(history.Coverage
                 .Where(period => !music || !musicStart.HasValue || period.EndUtc > musicStart.Value)
                 .Select(period => new UserActivityCoverage
@@ -119,7 +120,7 @@ internal static class YearlyRewindAggregator
 
     internal static IEnumerable<ImportedPlayback> EligibleImports(UserActivityHistory history, DateTimeOffset start, DateTimeOffset cutoff, DateTimeOffset generated)
         => history.ImportedPlayback.Where(row => row.ImportedAtUtc <= generated && row.StartedAtUtc >= start && row.StartedAtUtc < cutoff
-            && row.StartedAtUtc < (history.PlaybackReportingBeforeUtc ?? cutoff));
+            && row.StartedAtUtc < (history.PlaybackReportingBoundary(row.Item.ItemType) ?? cutoff));
 
     private static YearlyRewindMonth[] CreateMonths(DateTimeOffset start, DateTimeOffset cutoff, TimeZoneInfo zone)
     {
