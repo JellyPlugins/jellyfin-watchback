@@ -40,16 +40,17 @@ var MOCK_YEARLY_REWIND=(function(){
         musicItems.forEach(function(track,trackIndex){
             var seconds=track.ActiveSeconds*weights[(index+trackIndex)%weights.length]/weightSum;
             amount+=seconds;
-            track.Genres.forEach(function(name){genres[name]=(genres[name]||0)+seconds/track.Genres.length;});
+            track.Genres.forEach(function(name){genres[name]=(genres[name]||0)+seconds;});
         });
         return {StartUtc:month.StartUtc,EndUtc:month.EndUtc,ActiveSeconds:amount,EstimatedSeconds:0,
             Genres:Object.keys(genres).map(function(name){return {Name:name,ActiveSeconds:genres[name]};})};
     });
     function distribute(weights){var sum=weights.reduce(function(a,b){return a+b;},0);return weights.map(function(weight){return measured*weight/sum;});}
     return {SchemaVersion:1,SnapshotId:'demo-rewind-2026',UserId:'demo-user',PeriodStartUtc:'2025-12-15T00:00:00Z',SnapshotAtUtc:'2026-12-15T00:00:00Z',
-        GeneratedAtUtc:'2026-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Partial',Items:items,Months:months,ActiveDays:68,ReconstructedItemCount:1,
+        GeneratedAtUtc:'2026-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Partial',FullTimePerGenre:true,ActivityStreak:{Days:13,Start:'2026-11-02',End:'2026-11-14'},Items:items,Months:months,ActiveDays:68,ReconstructedItemCount:1,
         Music:{SchemaVersion:1,SnapshotId:'demo-music-2026',UserId:'demo-user',PeriodStartUtc:'2025-12-15T00:00:00Z',SnapshotAtUtc:'2026-12-15T00:00:00Z',
-            GeneratedAtUtc:'2026-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Ready',Items:musicItems,Months:musicMonths,ActiveDays:150,ReconstructedItemCount:0,
+            GeneratedAtUtc:'2026-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Ready',FullTimePerGenre:true,Items:musicItems,Months:musicMonths,ActiveDays:150,ReconstructedItemCount:0,
+            Insights:{HourlySeconds:Array(24).fill(musicItems.reduce(function(sum,item){return sum+item.ActiveSeconds;},0)/24),WeekdaySeconds:Array(7).fill(musicItems.reduce(function(sum,item){return sum+item.ActiveSeconds;},0)/7),LongestStreakDays:10,LongestStreakStart:'2026-11-05',LongestStreakEnd:'2026-11-14'},
             Comparison:{PeriodStartUtc:'2024-12-15T00:00:00Z',SnapshotAtUtc:'2025-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Ready',
                 ActiveSeconds:22*3600,EstimatedSeconds:0,ReconstructedItemCount:0,TrackCount:6,PlayCount:320,ActiveDays:124,Genres:['Electronic','Rock','Jazz'],TopGenre:'Electronic'}},
         Insights:{HourlySeconds:distribute([0,0,0,0,0,0,0,1,2,2,1,1,2,1,1,1,2,4,8,12,16,14,8,3]),

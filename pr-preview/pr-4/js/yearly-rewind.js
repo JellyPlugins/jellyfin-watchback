@@ -89,7 +89,7 @@
         var result = new Map();
         items.forEach(function (item) {
             var names = genreNames(item); if (!names.length) names = [''];
-            names.forEach(function (name) { result.set(name, (result.get(name) || 0) + (value(item, 'ActiveSeconds') || 0) / names.length); });
+            names.forEach(function (name) { result.set(name, (result.get(name) || 0) + (value(item, 'ActiveSeconds') || 0)); });
         });
         return result;
     }
@@ -128,37 +128,48 @@
         svg.setAttribute('aria-label', title + ': ' + descriptions.join('; '));
         root.append(svg, legend);
     }
+    function renderGenreChart(root, source, weights, title, className, id) {
+        var chart = section(root, title, className);
+        var heading = chart.querySelector('h3'); heading.classList.add('jfw-rewind-genre-heading');
+        var toggle = node('button', 'ⓘ', 'jfw-rewind-info-toggle'); toggle.type = 'button';
+        toggle.setAttribute('aria-label', text('genreInfoToggle')); toggle.setAttribute('aria-expanded', 'false'); toggle.setAttribute('aria-controls', id + '-info');
+        heading.append(toggle);
+        var info = node('p', text('genreInfo'), 'jfw-rewind-genre-info'); info.id = id + '-info'; info.hidden = true; chart.append(info);
+        toggle.addEventListener('click', function () { info.hidden = !info.hidden; toggle.setAttribute('aria-expanded', String(!info.hidden)); });
+        var controls = node('div', null, 'jfw-rewind-genre-controls');
+        var count = node('p', null, 'jfw-rewind-secondary'); controls.append(count); chart.append(controls);
+        var body = node('div', null, 'jfw-rewind-pie-body');
+        function show(current) {
+            count.textContent = text('genreCount').replace('{count}', number(Array.from(current.keys()).filter(Boolean).length));
+            pie(body, title, genreEntries(current));
+        }
+        var months = value(source, 'Months') || [];
+        // Legacy snapshots only retained divided monthly weights; their annual item facts remain usable.
+        if (value(source, 'FullTimePerGenre') && months.length && months.every(function (month) { return Array.isArray(value(month, 'Genres')); })) {
+            var select = node('select', null, 'jfw-rewind-select'); select.id = id; select.setAttribute('aria-label', text('genrePeriod'));
+            var all = node('option', text('wholePeriod')); all.value = 'all'; select.append(all);
+            months.forEach(function (month, index) {
+                var option = node('option', new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone: value(source, 'TimeZoneId') || 'UTC' }).format(new Date(value(month, 'StartUtc'))));
+                option.value = String(index); select.append(option);
+            });
+            select.addEventListener('change', function () {
+                show(select.value === 'all' ? weights : new Map(value(months[Number(select.value)], 'Genres').map(function (genre) { return [value(genre, 'Name') || '', value(genre, 'ActiveSeconds') || 0]; })));
+            });
+            controls.append(select);
+        }
+        chart.append(body); show(weights);
+    }
     function renderPies(items, genres, months) {
         var grid = node('div', null, 'jfw-rewind-pies');
         var mix = section(grid, text('mediaMix'), 'jfw-rewind-mix');
         mix.append(node('p', text('byWatchTime'), 'jfw-rewind-secondary'));
         var mixBody = node('div', null, 'jfw-rewind-pie-body'); mix.append(mixBody);
-        pie(mixBody, text('mediaMix'), ['Movie', 'Episode'].map(function (kind) {
-            return { label: text(kind === 'Movie' ? 'movies' : 'series'), seconds: items.filter(function (item) { return value(item, 'ItemType') === kind; }).reduce(function (sum, item) { return sum + (value(item, 'ActiveSeconds') || 0); }, 0) };
+        var allItems = items.concat(value(value(report, 'Music'), 'Items') || []);
+        pie(mixBody, text('mediaMix'), ['Movie', 'Episode', 'Audio'].map(function (kind) {
+            return { label: text(kind === 'Movie' ? 'movies' : kind === 'Episode' ? 'series' : 'musicMedia'), seconds: allItems.filter(function (item) { return value(item, 'ItemType') === kind; }).reduce(function (sum, item) { return sum + (value(item, 'ActiveSeconds') || 0); }, 0) };
         }));
-        var genreSection = section(grid, text('topGenres'), 'jfw-rewind-genres');
-        var count = node('p', null, 'jfw-rewind-secondary'); genreSection.append(count);
-        var body = node('div', null, 'jfw-rewind-pie-body');
-        function showGenres(weights) {
-            count.textContent = text('genreCount').replace('{count}', number(Array.from(weights.keys()).filter(Boolean).length));
-            pie(body, text('topGenres'), genreEntries(weights));
-        }
-        if (months.length && months.every(function (month) { return Array.isArray(value(month, 'Genres')); })) {
-            var label = node('label', text('genrePeriod'), 'jfw-rewind-genre-period'); label.htmlFor = 'jfw-rewind-genre-period';
-            var select = node('select', null, 'jfw-rewind-select'); select.id = label.htmlFor;
-            var all = node('option', text('wholePeriod')); all.value = 'all'; select.append(all);
-            months.forEach(function (month, index) {
-                var option = node('option', new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone: value(report, 'TimeZoneId') || 'UTC' }).format(new Date(value(month, 'StartUtc'))));
-                option.value = String(index); select.append(option);
-            });
-            select.addEventListener('change', function () {
-                if (select.value === 'all') showGenres(genres);
-                else showGenres(new Map(value(months[Number(select.value)], 'Genres').map(function (genre) { return [value(genre, 'Name') || '', value(genre, 'ActiveSeconds') || 0]; })));
-            });
-            genreSection.append(label, select);
-        }
-        genreSection.append(body, node('p', text('genreAllocation'), 'jfw-rewind-secondary'));
-        showGenres(genres); panel.append(grid);
+        renderGenreChart(grid, report, genres, text('topGenres'), 'jfw-rewind-genres', 'jfw-rewind-genre-period');
+        panel.append(grid);
     }
     function distribution(root, labels, amounts) {
         var maximum = Math.max(1, ...amounts);
@@ -177,14 +188,45 @@
     function calendarDate(instant) {
         return new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' }).format(new Date(instant + 'T00:00:00Z'));
     }
+    function renderStreak(root) {
+        var video = value(report, 'Insights');
+        var music = value(report, 'Music');
+        var musicInsights = value(music, 'Insights');
+        var hasMusic = (value(music, 'Items') || []).length > 0;
+        var combined = value(report, 'ActivityStreak');
+        var measured = hasMeasuredPlayback() || (value(musicInsights, 'HourlySeconds') || []).some(function (amount) { return amount > 0; });
+        var estimatedOnly = (reconstructedCount() || value(music, 'ReconstructedItemCount')) && !measured;
+        var days = combined ? value(combined, 'Days') : !hasMusic && video ? value(video, 'LongestStreakDays') : null;
+        if (estimatedOnly) root.append(node('p', text('noMeasuredInsights'), 'jfw-rewind-secondary'));
+        else if (days === null || days === undefined) root.append(node('p', text('insightsMissing'), 'jfw-rewind-secondary'));
+        else {
+            root.append(node('p', number(days) + ' ' + text(new Intl.PluralRules(locale).select(days) === 'one' ? 'daySingular' : 'dayPlural'), 'jfw-rewind-streak-length'));
+            var from = combined ? value(combined, 'Start') : value(video, 'LongestStreakStart');
+            var to = combined ? value(combined, 'End') : value(video, 'LongestStreakEnd');
+            if (days && from && to) root.append(node('p', calendarDate(from) + ' – ' + calendarDate(to)));
+        }
+        if (combined || hasMusic || value(report, 'FullTimePerGenre')) {
+            var breakdown = node('div', null, 'jfw-rewind-streak-breakdown');
+            [[report, 'videoMedia', 'video'], [music, 'musicMedia', 'music']].forEach(function (entry) {
+                var insights = value(entry[0], 'Insights');
+                var onlyEstimates = value(entry[0], 'ReconstructedItemCount') && !(value(insights, 'HourlySeconds') || []).some(function (amount) { return amount > 0; });
+                var amount = insights && !onlyEstimates ? value(insights, 'LongestStreakDays') : entry[0] ? null : value(report, 'FullTimePerGenre') ? 0 : null;
+                var stat = node('div', null, 'jfw-rewind-streak-' + entry[2]);
+                stat.append(node('strong', amount === null || amount === undefined ? '—' : number(amount)), node('span', text(entry[1]))); breakdown.append(stat);
+            });
+            root.append(breakdown);
+        }
+        root.append(node('p', text('streakHelp'), 'jfw-rewind-secondary'));
+    }
     function renderInsights() {
         var grid = node('div', null, 'jfw-rewind-insight-grid');
         var patterns = section(grid, text('viewingHabits'), 'jfw-rewind-patterns');
         var streak = section(grid, text('streak'), 'jfw-rewind-streak');
         var insights = value(report, 'Insights');
-        if (!insights) { [patterns, streak].forEach(function (root) { root.append(node('p', text('insightsMissing'), 'jfw-rewind-secondary')); }); panel.append(grid); return; }
+        renderStreak(streak);
+        if (!insights) { patterns.append(node('p', text('insightsMissing'), 'jfw-rewind-secondary')); panel.append(grid); return; }
         if (reconstructedCount() && !hasMeasuredPlayback()) {
-            [patterns, streak].forEach(function (root) { root.append(node('p', text('noMeasuredInsights'), 'jfw-rewind-secondary')); });
+            patterns.append(node('p', text('noMeasuredInsights'), 'jfw-rewind-secondary'));
             panel.append(grid); return;
         }
         var hours = value(insights, 'HourlySeconds') || [];
@@ -202,10 +244,6 @@
             day.append(node('p', favorites(periodLabels, amounts), 'jfw-rewind-favorite')); distribution(day, periodLabels, amounts);
             groups.append(week, day); patterns.append(groups, node('p', text('serverTime').replace('{zone}', value(report, 'TimeZoneId') || 'UTC'), 'jfw-rewind-secondary'));
         }
-        var days = value(insights, 'LongestStreakDays') || 0;
-        streak.append(node('p', number(days) + ' ' + text(new Intl.PluralRules(locale).select(days) === 'one' ? 'daySingular' : 'dayPlural'), 'jfw-rewind-streak-length'));
-        if (days) streak.append(node('p', calendarDate(value(insights, 'LongestStreakStart')) + ' – ' + calendarDate(value(insights, 'LongestStreakEnd'))));
-        streak.append(node('p', text('streakHelp'), 'jfw-rewind-secondary'));
         panel.append(grid);
     }
     function renderComparison(items, series, genres) {
@@ -266,8 +304,8 @@
         if (totalSeconds || !reconstructedCount()) watchHours = (reconstructedCount() ? '≈ ' : '') + number(totalSeconds / 3600, 1);
         addStat(stats, watchHours, text('hours'), 'schedule');
         addStat(stats, number(movies.length), text('movies'), 'movie');
-        addStat(stats, number(episodes.length), text('episodes'), 'episodes');
         addStat(stats, number(series.size), text('series'), 'tv');
+        addStat(stats, number(episodes.length), text('episodes'), 'episodes');
         addStat(stats, reconstructedCount() && !hasMeasuredPlayback() ? '—' : number(value(report, 'ActiveDays') || 0), text(reconstructedCount() ? 'measuredActiveDays' : 'activeDays'), 'activeDays');
         var music = value(report, 'Music');
         var tracks = value(music, 'Items') || [];
@@ -314,26 +352,7 @@
         top.append(list);
         if (!total) { top.append(node('p', text('noListeningDuration'))); return; }
         var months = value(music, 'Months') || [];
-        var genres = section(root, text('musicGenres'), 'jfw-rewind-music-genres');
-        var count = node('p', null, 'jfw-rewind-secondary'); genres.append(count);
-        var body = node('div', null, 'jfw-rewind-pie-body');
-        function show(weights) {
-            count.textContent = text('genreCount').replace('{count}', number(Array.from(weights.keys()).filter(Boolean).length));
-            pie(body, text('musicGenres'), genreEntries(weights));
-        }
-        if (months.length && months.every(function (month) { return Array.isArray(value(month, 'Genres')); })) {
-            var label = node('label', text('genrePeriod'), 'jfw-rewind-genre-period'); label.htmlFor = 'jfw-rewind-music-period';
-            var select = node('select', null, 'jfw-rewind-select'); select.id = label.htmlFor;
-            var all = node('option', text('wholePeriod')); all.value = 'all'; select.append(all);
-            months.forEach(function (month, index) {
-                var option = node('option', new Intl.DateTimeFormat(locale, { timeZone: value(music, 'TimeZoneId') || 'UTC', month: 'long', year: 'numeric' }).format(new Date(value(month, 'StartUtc')))); option.value = String(index); select.append(option);
-            });
-            select.addEventListener('change', function () {
-                show(select.value === 'all' ? genreWeights(items) : new Map(value(months[Number(select.value)], 'Genres').map(function (genre) { return [value(genre, 'Name') || '', value(genre, 'ActiveSeconds') || 0]; })));
-            });
-            genres.append(label, select);
-        }
-        genres.append(body, node('p', text('musicGenreAllocation'), 'jfw-rewind-secondary')); show(genreWeights(items));
+        renderGenreChart(root, music, genreWeights(items), text('musicGenres'), 'jfw-rewind-music-genres', 'jfw-rewind-music-period');
     }
     function renderMonthlyChart(root, source, title, className, missing) {
         var months = value(source, 'Months') || [];
@@ -497,21 +516,23 @@
         document.removeEventListener('visibilitychange', visible);
     }
     var english = {
+        videoMedia: "Films / series",
+        musicMedia: "Music",
+        genreInfoToggle: "Information about genre counting",
+        genreInfo: "The full playback time counts toward every genre assigned to a title. The sum of genre times can therefore exceed actual playback time. Percentages refer to the sum of genre times.",
         title: 'Your year in review', tabTitle: 'Year in review', loading: 'Loading your rewind…', unavailable: 'Your rewind is not available yet.', retry: 'Try again',
         partial: 'This rewind includes only the periods for which playback was recorded.', notCollected: 'Playback was not recorded before this rewind’s cutoff.',
         empty: 'No qualifying playback was recorded.', hourUnit: 'h', hourUnitLong: 'hours', hours: 'Hours watched', movies: 'Films', episodes: 'Episodes', series: 'Series', activeDays: 'Active days',
         topGenres: 'Your film / series genres', months: 'Your viewing year',
         music: 'Your music year', listeningHours: 'Hours listened', tracks: 'Tracks', musicPlays: 'Music plays',
         topTracks: 'Your top 5 tracks', byListenTime: 'Ranked by listening time.', musicGenres: 'Your music genres', musicMonths: 'Your listening year',
-        musicGenreAllocation: 'Listening time is divided equally among a track’s genres.',
         musicReconstructed: 'Includes reconstructed music activity. Listening time may be estimated or unavailable; play counts may be incomplete.',
         noListeningDuration: 'No listening duration is available for the reconstructed tracks.',
-        mediaMix: "Your film / series mix",
-        byWatchTime: "By watch time (hours)",
+        mediaMix: "Your media mix",
+        byWatchTime: "By playback time (hours)",
         genreCount: "Distinct genres: {count}",
         genrePeriod: "Viewing period",
         wholePeriod: "Entire period",
-        genreAllocation: "Watch time is divided equally among a title’s genres.",
         otherGenres: "Other genres",
         viewingHabits: "Your viewing habits",
         insightsMissing: "These details were not included when this report was created.",
@@ -522,10 +543,10 @@
         evening: "Evening",
         night: "Night",
         serverTime: "Time zone: {zone}",
-        streak: "Your longest viewing streak",
+        streak: "Your longest active-day streak",
         daySingular: "day",
         dayPlural: "days",
-        streakHelp: "Consecutive calendar days with recorded playback.",
+        streakHelp: "Consecutive calendar days with measured film, series or music playback.",
         comparison: "Compared with your previous rewind",
         noComparison: "No report for the preceding period is available yet.",
         previousPeriod: "Previous period",
@@ -593,7 +614,12 @@
 .jfw-rewind-pie-body{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:1em;margin-top:1em}
 .jfw-rewind-pie{width:180px;max-width:100%;height:auto;flex-shrink:0}.jfw-rewind-pie-legend{list-style:none;padding:0;margin:0;flex:1 1 180px;min-width:0}
 .jfw-rewind-pie-legend li{display:flex;align-items:center;gap:.5em;margin:.6em 0;flex-wrap:wrap}.jfw-rewind-swatch{width:.7em;height:.7em;border-radius:2px;flex-shrink:0}.jfw-rewind-legend-label{flex:1;min-width:0;overflow-wrap:anywhere}.jfw-rewind-pie-legend strong{font-size:.85em;font-weight:400;white-space:nowrap}
-.jfw-rewind-genre-period{display:block;font-size:.85em;opacity:.7;margin-bottom:.4em}.jfw-rewind-select{font:inherit;color:inherit;background:rgba(127,127,127,.1);border:1px solid var(--rewind-border);border-radius:4px;padding:.4em;max-width:100%;color-scheme:light dark}.jfw-rewind-select option{background:Canvas;color:CanvasText}
+.jfw-rewind-genre-heading{display:flex;align-items:center;gap:.5em}
+.jfw-rewind-info-toggle{border:0;background:transparent;color:#00a4dc;font:inherit;font-size:1.15em;padding:0 .2em;cursor:pointer;line-height:1}.jfw-rewind-info-toggle:focus-visible{outline:2px solid #00a4dc;outline-offset:3px;border-radius:3px}
+.jfw-rewind-genre-info{color:#00a4dc;font-size:.85em;line-height:1.5;margin:0 0 1em;overflow-wrap:anywhere}.jfw-rewind-genre-info[hidden]{display:none}
+.jfw-rewind-genre-controls{display:flex;align-items:center;justify-content:space-between;gap:.7em}.jfw-rewind-genre-controls p{margin:0;flex:1;min-width:0}.jfw-rewind-genre-controls select{margin-inline-start:auto;min-width:0;max-width:58%}
+.jfw-rewind-streak-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1em;border-top:1px solid var(--rewind-border);padding-top:1em;margin-top:1em}.jfw-rewind-streak-breakdown > div{display:flex;flex-direction:column;gap:.3em;min-width:0}.jfw-rewind-streak-breakdown strong{font-size:1.5em;color:var(--rewind-primary)}.jfw-rewind-streak-breakdown span{font-size:.8em;opacity:.7;overflow-wrap:anywhere}
+.jfw-rewind-select{font:inherit;color:inherit;background:rgba(127,127,127,.1);border:1px solid var(--rewind-border);border-radius:4px;padding:.4em;max-width:100%;color-scheme:light dark}.jfw-rewind-select option{background:Canvas;color:CanvasText}
 .jfw-rewind-insight-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:1.2em;margin-top:1.2em}.jfw-rewind-pattern-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.2em}.jfw-rewind-pattern-grid h4{font-size:.9em;margin:.3em 0}.jfw-rewind-favorite{font-size:1.05em;font-weight:600;color:var(--rewind-primary);overflow-wrap:anywhere}
 .jfw-rewind-distribution{list-style:none;padding:0;margin:0}.jfw-rewind-distribution li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.4em;margin:.8em 0;font-size:.8em}.jfw-rewind-distribution li span{overflow-wrap:anywhere}.jfw-rewind-distribution strong{font-weight:400;white-space:nowrap;opacity:.7}.jfw-rewind-distribution-track{grid-column:1/-1;background:rgba(127,127,127,.1);border-radius:3px;overflow:hidden;height:5px}.jfw-rewind-distribution-track div{height:100%;background:var(--rewind-primary)}
 .jfw-rewind-streak-length{font-size:2em;font-weight:700;color:var(--rewind-primary);margin:.8em 0 .3em;overflow-wrap:anywhere}
