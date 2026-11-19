@@ -129,6 +129,39 @@ public sealed class YearlyRewindStoreTests : IDisposable
         Assert.Equal(current.SnapshotId, store.Load(_userId)!.SnapshotId);
     }
 
+    [Theory]
+    [InlineData("nested")]
+    [InlineData("missing-items")]
+    [InlineData("period-start")]
+    [InlineData("cutoff")]
+    [InlineData("generation")]
+    [InlineData("zone")]
+    [InlineData("video-item")]
+    [InlineData("null-item")]
+    public void InvalidMusicCannotReplaceAnExistingReport(string corruption)
+    {
+        var store = new YearlyRewindStore(_directory);
+        var current = Snapshot(2026);
+        Assert.True(store.Publish(current));
+        var next = Snapshot(2027);
+        var music = next with { Items = [next.Items[0] with { ItemType = "Audio" }] };
+        music = corruption switch
+        {
+            "nested" => music with { Music = music },
+            "missing-items" => music with { Items = null! },
+            "period-start" => music with { PeriodStartUtc = music.PeriodStartUtc.AddDays(1) },
+            "cutoff" => music with { SnapshotAtUtc = music.SnapshotAtUtc.AddSeconds(-1) },
+            "generation" => music with { GeneratedAtUtc = music.GeneratedAtUtc.AddSeconds(1) },
+            "zone" => music with { TimeZoneId = "Europe/Berlin" },
+            "video-item" => music with { Items = next.Items },
+            "null-item" => music with { Items = [null!] },
+            _ => throw new ArgumentOutOfRangeException(nameof(corruption))
+        };
+        Assert.Throws<InvalidDataException>(() => store.Publish(next with { Music = music }));
+        Assert.Equal(current.SnapshotId, store.Load(_userId)!.SnapshotId);
+        Assert.Single(Directory.GetFiles(_directory, "*.json", SearchOption.AllDirectories));
+    }
+
     [Fact]
     public void ExistingOversizedPendingIsQuarantinedWithoutBlockingAReplacement()
     {

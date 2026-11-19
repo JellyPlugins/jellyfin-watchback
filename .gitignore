@@ -11,6 +11,7 @@ coverage*.xml
 *.user
 **/playwright-report/
 **/test-results/
+**/test-reports/
 test/e2e/runtime/
 test/e2e/setup/auth.json
 Jellyfin.Plugin.Watchback/PluginPages/configPage.html
