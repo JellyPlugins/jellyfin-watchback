@@ -22,9 +22,34 @@ var MOCK_YEARLY_REWIND=(function(){
             ActiveSeconds:amount,EstimatedSeconds:index===0?estimate:0,
             Genres:Object.keys(genres).map(function(name){return {Name:name,ActiveSeconds:amount*genres[name]/total};})};
     });
+    var musicItems=[
+        {Name:'Neon Skyline',Genres:['Synthpop','Electronic'],Duration:240,PlayCount:96},
+        {Name:'Midnight Drive',Genres:['Electronic'],Duration:210,PlayCount:84},
+        {Name:'Paper Lanterns',Genres:['Indie','Rock'],Duration:225,PlayCount:72},
+        {Name:'Sunday Morning',Genres:['Jazz'],Duration:270,PlayCount:60},
+        {Name:'Ocean Avenue',Genres:['Rock'],Duration:195,PlayCount:48},
+        {Name:'Golden Hour',Genres:['Soul','Jazz'],Duration:255,PlayCount:36},
+        {Name:'Northern Lights',Genres:['Ambient','Electronic'],Duration:300,PlayCount:24},
+        {Name:'Homeward',Genres:['Indie'],Duration:180,PlayCount:12}
+    ].map(function(track,index){
+        return {ItemId:'rewind-track-'+index,Name:track.Name,ItemType:'Audio',Genres:track.Genres,
+            ActiveSeconds:track.Duration*track.PlayCount,EstimatedSeconds:0,HasReconstructedActivity:false,PlayCount:track.PlayCount};
+    });
+    var musicMonths=months.map(function(month,index){
+        var amount=0,genres={};
+        musicItems.forEach(function(track,trackIndex){
+            var seconds=track.ActiveSeconds*weights[(index+trackIndex)%weights.length]/weightSum;
+            amount+=seconds;
+            track.Genres.forEach(function(name){genres[name]=(genres[name]||0)+seconds/track.Genres.length;});
+        });
+        return {StartUtc:month.StartUtc,EndUtc:month.EndUtc,ActiveSeconds:amount,EstimatedSeconds:0,
+            Genres:Object.keys(genres).map(function(name){return {Name:name,ActiveSeconds:genres[name]};})};
+    });
     function distribute(weights){var sum=weights.reduce(function(a,b){return a+b;},0);return weights.map(function(weight){return measured*weight/sum;});}
     return {SchemaVersion:1,SnapshotId:'demo-rewind-2026',UserId:'demo-user',PeriodStartUtc:'2025-12-15T00:00:00Z',SnapshotAtUtc:'2026-12-15T00:00:00Z',
         GeneratedAtUtc:'2026-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Partial',Items:items,Months:months,ActiveDays:68,ReconstructedItemCount:1,
+        Music:{SchemaVersion:1,SnapshotId:'demo-music-2026',UserId:'demo-user',PeriodStartUtc:'2025-12-15T00:00:00Z',SnapshotAtUtc:'2026-12-15T00:00:00Z',
+            GeneratedAtUtc:'2026-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Ready',Items:musicItems,Months:musicMonths,ActiveDays:150,ReconstructedItemCount:0},
         Insights:{HourlySeconds:distribute([0,0,0,0,0,0,0,1,2,2,1,1,2,1,1,1,2,4,8,12,16,14,8,3]),
             WeekdaySeconds:distribute([8,9,10,10,17,26,20]),LongestStreakDays:7,LongestStreakStart:'2026-11-02',LongestStreakEnd:'2026-11-08'},
         Comparison:{PeriodStartUtc:'2024-12-15T00:00:00Z',SnapshotAtUtc:'2025-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Ready',
