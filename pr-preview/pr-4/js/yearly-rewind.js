@@ -211,11 +211,12 @@
     function renderComparison(items, series, genres) {
         var root = section(panel, text('comparison'), 'jfw-rewind-comparison');
         var previous = value(report, 'Comparison');
-        if (!previous) { root.append(node('p', text('noComparison'), 'jfw-rewind-secondary')); return; }
-        root.append(node('p', text('previousPeriod') + ': ' + date(value(previous, 'PeriodStartUtc'), value(previous, 'TimeZoneId')) + ' – ' + date(new Date(new Date(value(previous, 'SnapshotAtUtc')).getTime() - 1).toISOString(), value(previous, 'TimeZoneId')), 'jfw-rewind-secondary'));
         var music = value(report, 'Music');
         var tracks = value(music, 'Items') || [];
         var previousMusic = value(music, 'Comparison');
+        var period = previous || previousMusic;
+        if (!period) { root.append(node('p', text('noComparison'), 'jfw-rewind-secondary')); return; }
+        root.append(node('p', text('previousPeriod') + ': ' + date(value(period, 'PeriodStartUtc'), value(period, 'TimeZoneId')) + ' – ' + date(new Date(new Date(value(period, 'SnapshotAtUtc')).getTime() - 1).toISOString(), value(period, 'TimeZoneId')), 'jfw-rewind-secondary'));
         var musicEstimated = tracks.some(function (item) { return value(item, 'HasReconstructedActivity'); });
         if (reconstructedCount() || value(previous, 'ReconstructedItemCount') || musicEstimated || value(previousMusic, 'ReconstructedItemCount')) root.append(node('p', text('comparisonEstimated'), 'jfw-rewind-notice'));
         else if (value(report, 'DataState') === 'Partial' || value(previous, 'DataState') === 'Partial' || value(music, 'DataState') === 'Partial' || value(previousMusic, 'DataState') === 'Partial') root.append(node('p', text('partialComparison'), 'jfw-rewind-notice'));
@@ -223,13 +224,14 @@
         ['metric', 'current', 'previous', 'change'].forEach(function (key) { var cell = node('th', text(key)); cell.scope = 'col'; heading.append(cell); }); head.append(heading); table.append(head);
         var rows = node('tbody');
         var currentHours = items.reduce(function (sum, item) { return sum + (value(item, 'ActiveSeconds') || 0); }, 0) / 3600;
-        var previousHours = (value(previous, 'ActiveSeconds') || 0) / 3600;
+        var previousHours = previous ? (value(previous, 'ActiveSeconds') || 0) / 3600 : null;
         var metrics = [
             ['hours', reconstructedCount() && !currentHours ? null : currentHours, value(previous, 'ReconstructedItemCount') && !previousHours ? null : previousHours, 1],
-            ['movies', items.filter(function (item) { return value(item, 'ItemType') === 'Movie'; }).length, value(previous, 'MovieCount') || 0, 0],
-            ['episodes', items.filter(function (item) { return value(item, 'ItemType') === 'Episode'; }).length, value(previous, 'EpisodeCount') || 0, 0],
-            ['series', series.size, value(previous, 'SeriesCount') || 0, 0], ['activeDays', reconstructedCount() && !hasMeasuredPlayback() ? null : value(report, 'ActiveDays') || 0, value(previous, 'ReconstructedItemCount') && (value(previous, 'ActiveSeconds') || 0) <= (value(previous, 'EstimatedSeconds') || 0) ? null : value(previous, 'ActiveDays') || 0, 0]
+            ['movies', items.filter(function (item) { return value(item, 'ItemType') === 'Movie'; }).length, previous ? value(previous, 'MovieCount') || 0 : null, 0],
+            ['episodes', items.filter(function (item) { return value(item, 'ItemType') === 'Episode'; }).length, previous ? value(previous, 'EpisodeCount') || 0 : null, 0],
+            ['series', series.size, previous ? value(previous, 'SeriesCount') || 0 : null, 0], ['activeDays', reconstructedCount() && !hasMeasuredPlayback() ? null : value(report, 'ActiveDays') || 0, !previous || (value(previous, 'ReconstructedItemCount') && (value(previous, 'ActiveSeconds') || 0) <= (value(previous, 'EstimatedSeconds') || 0)) ? null : value(previous, 'ActiveDays') || 0, 0]
         ];
+        if (value(report, 'DataState') === 'NotCollected') metrics.forEach(function (metric) { metric[1] = null; });
         if (tracks.length) {
             var listeningHours = tracks.reduce(function (sum, item) { return sum + (value(item, 'ActiveSeconds') || 0); }, 0) / 3600;
             var oldListeningHours = previousMusic ? (value(previousMusic, 'ActiveSeconds') || 0) / 3600 : null;
@@ -249,6 +251,7 @@
             row.append(label, node('td', number(metric[1], metric[3])), node('td', number(metric[2], metric[3])), node('td', difference)); rows.append(row);
         });
         table.append(rows); root.append(table);
+        if (!previous) return;
         var known = Array.from(genres.entries()).filter(function (entry) { return entry[0]; }).sort(function (a, b) { var difference = b[1] - a[1]; if (difference) return difference; if (a[0] < b[0]) return -1; return a[0] > b[0] ? 1 : 0; });
         root.append(node('p', text('previousTopGenre') + ': ' + (value(previous, 'TopGenre') || text('unknownGenre')) + ' → ' + text('currentTopGenre') + ': ' + (known[0]?.[0] || text('unknownGenre'))));
         var oldGenres = new Set(value(previous, 'Genres') || []);
