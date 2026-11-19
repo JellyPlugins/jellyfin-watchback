@@ -398,5 +398,5 @@ test.each([undefined, {ActiveSeconds: 3600}])('missing historical music counts s
  loadYearlyRewindBundle(); await flush();
  const rows = root.querySelectorAll('.jfw-rewind-comparison-table tbody tr');
  expect(rows[6].textContent).toContain('Tracks7——');
- expect(rows[7].textContent).toContain('Plays28——');
+ expect(rows[7].textContent).toContain('Music plays28——');
 });
