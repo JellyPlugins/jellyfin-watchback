@@ -126,7 +126,7 @@ public sealed class PlaybackReportingImportTests : IDisposable
         Insert(db, "2026-12-02 12:00:00Z", type: "Audio");
         var rows = Reader().Read(_cutoff);
         Assert.Equal(2, rows.Count);
-        var item = Item() with { ItemType = "Audio", Genres = ["Jazz"] };
+        var item = Item() with { ItemType = "Audio", Genres = ["Jazz", "Blues"] };
         var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
         foreach (var entry in rows) Assert.True(history.Import(entry, item, _cutoff));
         history.Record(item, new UserItemActivity { LastPlayedDate = rows.Max(row => row.StartedAtUtc).UtcDateTime, Played = true, PlayCount = 100 }, _cutoff, _cutoff);
@@ -140,7 +140,7 @@ public sealed class PlaybackReportingImportTests : IDisposable
         Assert.Equal(2, track.PlayCount);
         Assert.Equal(1200, track.ActiveSeconds);
         Assert.Equal(1200, track.EstimatedSeconds);
-        Assert.Equal(1200, music.Months.SelectMany(month => month.Genres!).Sum(genre => genre.ActiveSeconds));
+        Assert.Equal(2400, music.Months.SelectMany(month => month.Genres!).Sum(genre => genre.ActiveSeconds));
         var reports = new YearlyRewindStore(_directory);
         Assert.True(reports.Publish(report));
         Assert.Equal(2, reports.Load(_userId)!.Music!.PlaybackReportingPlayCount);

@@ -324,7 +324,7 @@ public sealed class UserActivityHistoryTests : IDisposable
         Assert.Equal(120, report.Music.Months.Sum(month => month.ActiveSeconds));
         var genres = report.Music.Months.SelectMany(month => month.Genres!).ToArray();
         Assert.Equal(2, genres.Length);
-        Assert.All(genres, genre => Assert.Equal(60, genre.ActiveSeconds));
+        Assert.All(genres, genre => Assert.Equal(120, genre.ActiveSeconds));
         Assert.Equal(120, report.Music.Insights!.HourlySeconds.Sum());
         Assert.Equal(60, report.Insights!.HourlySeconds.Sum());
         var reports = new YearlyRewindStore(_directory);

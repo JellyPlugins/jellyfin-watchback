@@ -142,6 +142,15 @@ internal sealed class YearlyRewindStore
             Validate(music, userId);
         }
 
+        if (snapshot.ActivityStreak is { } streak
+            && (streak.Days < 0 || streak.Days > snapshot.ActiveDays + (snapshot.Music?.ActiveDays ?? 0)
+                || streak.Days < Math.Max(snapshot.Insights?.LongestStreakDays ?? 0, snapshot.Music?.Insights?.LongestStreakDays ?? 0)
+                || (streak.Days == 0 && (streak.Start.HasValue || streak.End.HasValue))
+                || (streak.Days > 0 && (!streak.Start.HasValue || !streak.End.HasValue || streak.End.Value.DayNumber - streak.Start.Value.DayNumber + 1 != streak.Days))))
+        {
+            throw new InvalidDataException("The rewind snapshot contains an invalid combined activity streak.");
+        }
+
         ValidateInsights(snapshot);
     }
 
@@ -178,10 +187,15 @@ internal sealed class YearlyRewindStore
                 continue;
             }
 
+            var genreSeconds = genres.Sum(genre => genre?.ActiveSeconds ?? 0);
+            var tolerance = Math.Max(0.001, month.ActiveSeconds * 1e-10);
             if (genres.Any(genre => genre is null || !double.IsFinite(genre.ActiveSeconds) || genre.ActiveSeconds < 0
                 || (genre.Name is not null && string.IsNullOrWhiteSpace(genre.Name)))
                 || !double.IsFinite(month.ActiveSeconds) || !double.IsFinite(month.EstimatedSeconds) || month.EstimatedSeconds < 0 || month.EstimatedSeconds > month.ActiveSeconds
-                || Math.Abs(genres.Sum(genre => genre.ActiveSeconds) - month.ActiveSeconds) > Math.Max(0.001, month.ActiveSeconds * 1e-10))
+                || !double.IsFinite(genreSeconds)
+                || (snapshot.FullTimePerGenre
+                    ? genreSeconds < month.ActiveSeconds - tolerance || genres.Any(genre => genre.ActiveSeconds > month.ActiveSeconds + tolerance)
+                    : Math.Abs(genreSeconds - month.ActiveSeconds) > tolerance))
             {
                 throw new InvalidDataException("The rewind snapshot contains invalid monthly genres.");
             }

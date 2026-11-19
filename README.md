@@ -10,14 +10,16 @@ Your personal annual Jellyfin playback rewind.
 
 - Viewing hours, films, episodes, series and active days.
 - Optional music section with listening hours, track and play counts, top 5 tracks by listening time, monthly listening chart and music genre chart with monthly selection.
-- Monthly viewing chart, film/episode and genre pie charts, with monthly genre selection.
-- Viewing times, weekdays, longest active-day streak and comparison with the previous report.
+- Monthly viewing and listening charts, a film/series/music mix, and genre charts with monthly selection.
+- Viewing times, weekdays, combined film/series/music active-day streak with separate video and music streaks, and comparison with the previous report.
 - Eight languages: English, German, French, Spanish, Portuguese, Chinese, Turkish and Swedish. Both the personal page and administration settings follow the active Jellyfin user’s display language, with English fallback for unsupported languages.
 - Authenticated personal reports and administrator-only settings.
 
 Activity is recorded whenever the plugin runs, independently of whether the annual page is enabled. The page is **disabled by default**. Available Jellyfin state can reconstruct a known playback per title; old session history, exact viewing times and repeated plays cannot be recovered from lifetime totals. Estimates remain visibly separate from measured playback.
 
 Enable **Yearly Rewind** in the plugin settings and choose its annual display period (default **15 December–15 January**, inclusive). At 00:00 server time on the first day, the preceding annual period is frozen into one report per user. The report is replaced the next year. Hiding the tab after the configured end date keeps the report on disk. Changing the display settings never finalizes or rewrites an existing annual report.
+
+Genre charts count the full playback time for every genre assigned to a title. Their percentages use the sum of genre times, which can exceed actual playback time; the information button beside each genre heading explains this. Monthly genre selection is available in reports produced with this counting method. Older frozen reports retain their stored data and show the full-time annual genre chart from item metadata.
 
 The collector covers video and music playback. Music statistics appear only when the report contains qualifying music activity; music and video totals remain separate. Books are not included. Existing frozen reports remain unchanged. After upgrading from a video-only version, measured music coverage begins with the updated collector; available Jellyfin music state can supply conservative baseline estimates from earlier periods.
 

@@ -57,9 +57,9 @@ public sealed class YearlyRewindInsightTests : IDisposable
         Assert.Equal(new DateOnly(2026, 3, 2), insights.LongestStreakStart);
         Assert.Equal(new DateOnly(2026, 3, 3), insights.LongestStreakEnd);
         var genres = report.Months[2].Genres!;
-        Assert.Equal(2700, genres.Single(genre => genre.Name == "Drama").ActiveSeconds);
-        Assert.Equal(900, genres.Single(genre => genre.Name == "Adventure").ActiveSeconds);
-        Assert.Equal(3600, genres.Sum(genre => genre.ActiveSeconds));
+        Assert.Equal(3600, genres.Single(genre => genre.Name == "Drama").ActiveSeconds);
+        Assert.Equal(1800, genres.Single(genre => genre.Name == "Adventure").ActiveSeconds);
+        Assert.Equal(5400, genres.Sum(genre => genre.ActiveSeconds));
     }
 
     [Theory]
@@ -117,10 +117,55 @@ public sealed class YearlyRewindInsightTests : IDisposable
         var report = Build();
         var genres = report.Months[3].Genres!;
         Assert.Equal(3, genres.Count);
-        Assert.All(genres, genre => Assert.Equal(3600, genre.ActiveSeconds));
+        Assert.All(genres, genre => Assert.Equal(genre.Name is null ? 3600 : 7200, genre.ActiveSeconds));
         Assert.Contains(genres, genre => genre.Name is null);
         Assert.DoesNotContain(genres, genre => genre.Name == "Changed later");
-        Assert.All(report.Months, month => Assert.Equal(month.ActiveSeconds, month.Genres!.Sum(genre => genre.ActiveSeconds)));
+        Assert.Equal(18000, genres.Sum(genre => genre.ActiveSeconds));
+        Assert.Equal(10800, report.Months[3].ActiveSeconds);
+        Assert.True(report.FullTimePerGenre);
+    }
+
+    [Fact]
+    public void CombinedStreakJoinsVideoAndMusicDaysWithoutDoubleCountingSharedDays()
+    {
+        var first = Parse("2026-07-01T12:00:00Z");
+        Watch(first, first.AddMinutes(3));
+        Watch(first.AddDays(1), first.AddDays(1).AddMinutes(3));
+        var track = _movie with { ItemId = Guid.NewGuid(), ItemType = "Audio" };
+        for (var day = 1; day <= 3; day++) Watch(first.AddDays(day), first.AddDays(day).AddMinutes(3), track);
+        _history.Sessions.Add(new UserPlaybackSession
+        {
+            Item = track, Intervals = [new UserPlaybackInterval(first.AddDays(4), first.AddDays(4).AddMinutes(1))]
+        }); // An unqualified play cannot extend the streak.
+        var report = Build();
+        Assert.Equal(4, report.ActivityStreak!.Days);
+        Assert.Equal(new DateOnly(2026, 7, 1), report.ActivityStreak.Start);
+        Assert.Equal(new DateOnly(2026, 7, 4), report.ActivityStreak.End);
+        Assert.Equal(2, report.Insights!.LongestStreakDays);
+        Assert.Equal(3, report.Music!.Insights!.LongestStreakDays);
+        var store = new YearlyRewindStore(_directory);
+        Assert.True(store.Publish(report));
+        Assert.Equal(report.ActivityStreak, store.Load(_user)!.ActivityStreak);
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { ActivityStreak = report.ActivityStreak with { Days = 2, End = new DateOnly(2026, 7, 2) } }));
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { ActivityStreak = report.ActivityStreak with { Days = 6, End = new DateOnly(2026, 7, 6) } }));
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { ActivityStreak = report.ActivityStreak with { Start = null } }));
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { ActivityStreak = report.ActivityStreak with { End = new DateOnly(2026, 7, 1) } }));
+    }
+
+    [Fact]
+    public void ReconstructedActivityDoesNotInventCombinedStreakDates()
+    {
+        var cutoff = Parse("2026-12-15T00:00:00Z");
+        var history = new UserActivityHistory();
+        history.Record(_movie with { RuntimeTicks = TimeSpan.TicksPerHour },
+            new UserItemActivity { Played = true, LastPlayedDate = cutoff.AddDays(-1).UtcDateTime }, cutoff, cutoff);
+        var report = YearlyRewindAggregator.Build(_user, history, cutoff.AddYears(-1), cutoff, cutoff, TimeZoneInfo.Utc);
+        Assert.Equal(0, report.ActivityStreak!.Days);
+        Assert.Null(report.ActivityStreak.Start);
+        Assert.Null(report.ActivityStreak.End);
+        var store = new YearlyRewindStore(_directory);
+        Assert.True(store.Publish(report));
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { ActivityStreak = report.ActivityStreak with { Start = new DateOnly(2026, 12, 14) } }));
     }
 
     [Fact]

@@ -130,6 +130,60 @@ public sealed class YearlyRewindStoreTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FullAndLegacyGenreTimesRoundTripWithoutRewritingFrozenReports(bool fullTime)
+    {
+        var snapshot = Snapshot(2026) with
+        {
+            FullTimePerGenre = fullTime,
+            Months = [new YearlyRewindMonth { ActiveSeconds = 3600, Genres = [
+                new YearlyRewindGenre { Name = "Drama", ActiveSeconds = fullTime ? 3600 : 1800 },
+                new YearlyRewindGenre { Name = "Adventure", ActiveSeconds = fullTime ? 3600 : 1800 }] }]
+        };
+        var store = new YearlyRewindStore(_directory);
+        Assert.True(store.Publish(snapshot));
+        Assert.Equal(fullTime, store.Load(_userId)!.FullTimePerGenre);
+        snapshot.Months[0].Genres![0] = new YearlyRewindGenre { Name = "Drama", ActiveSeconds = 7200 };
+        Assert.Throws<InvalidDataException>(() => store.Publish(snapshot));
+        snapshot.Months[0].Genres![0] = new YearlyRewindGenre { Name = "Drama", ActiveSeconds = 0 };
+        snapshot.Months[0].Genres![1] = new YearlyRewindGenre { Name = "Adventure", ActiveSeconds = 0 };
+        Assert.Throws<InvalidDataException>(() => store.Publish(snapshot));
+        Assert.Equal(fullTime ? 3600 : 1800, store.Load(_userId)!.Months[0].Genres![0].ActiveSeconds);
+    }
+
+    [Theory]
+    [InlineData("negative")]
+    [InlineData("too-long")]
+    [InlineData("zero-start")]
+    [InlineData("zero-end")]
+    [InlineData("missing-start")]
+    [InlineData("missing-end")]
+    [InlineData("wrong-span")]
+    public void InvalidCombinedStreakCannotReplaceAPublishedReport(string corruption)
+    {
+        var store = new YearlyRewindStore(_directory);
+        var current = Snapshot(2026);
+        Assert.True(store.Publish(current));
+        var first = new DateOnly(2026, 7, 1);
+        var streak = new YearlyRewindStreak { Days = 3, Start = first, End = first.AddDays(2) };
+        streak = corruption switch
+        {
+            "negative" => streak with { Days = -1, Start = null, End = null },
+            "too-long" => streak with { Days = 4, End = first.AddDays(3) },
+            "zero-start" => streak with { Days = 0, End = null },
+            "zero-end" => streak with { Days = 0, Start = null },
+            "missing-start" => streak with { Start = null },
+            "missing-end" => streak with { End = null },
+            "wrong-span" => streak with { End = first },
+            _ => throw new ArgumentOutOfRangeException(nameof(corruption))
+        };
+        var next = Snapshot(2027) with { ActiveDays = 3, ActivityStreak = streak };
+        Assert.Throws<InvalidDataException>(() => store.Publish(next));
+        Assert.Equal(current.SnapshotId, store.Load(_userId)!.SnapshotId);
+    }
+
+    [Theory]
     [InlineData("nested")]
     [InlineData("missing-items")]
     [InlineData("period-start")]

@@ -20,7 +20,27 @@ internal static class YearlyRewindAggregator
     {
         var video = BuildMedia(userId, SelectMedia(history, false), start, cutoff, generated, zone, previous);
         var music = BuildMedia(userId, SelectMedia(history, true), start, cutoff, generated, zone, previous?.Music);
-        return video with { Music = music.Items.Count > 0 ? music : null };
+        return video with { Music = music.Items.Count > 0 ? music : null, ActivityStreak = BuildActivityStreak(history, start, cutoff, zone) };
+    }
+
+    private static YearlyRewindStreak BuildActivityStreak(UserActivityHistory history, DateTimeOffset start, DateTimeOffset cutoff, TimeZoneInfo zone)
+    {
+        var days = new HashSet<DateOnly>();
+        foreach (var interval in history.Sessions.Where(session => session.QualifiedAtUtc <= cutoff && session.Item.ItemType is "Movie" or "Episode" or "Audio")
+            .SelectMany(session => session.Intervals).Where(interval => interval.EndUtc > start && interval.StartUtc < cutoff))
+        {
+            var from = interval.StartUtc < start ? start : interval.StartUtc;
+            var to = interval.EndUtc > cutoff ? cutoff : interval.EndUtc;
+            var first = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(from, zone).DateTime);
+            var last = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(to.AddTicks(-1), zone).DateTime);
+            for (var date = first; date <= last; date = date.AddDays(1))
+            {
+                days.Add(date);
+            }
+        }
+
+        var insights = BuildInsights(days, new double[24], new double[7]);
+        return new YearlyRewindStreak { Days = insights.LongestStreakDays, Start = insights.LongestStreakStart, End = insights.LongestStreakEnd };
     }
 
     private static UserActivityHistory SelectMedia(UserActivityHistory history, bool music)
@@ -110,6 +130,7 @@ internal static class YearlyRewindAggregator
             DataState = state,
             Items = new Collection<YearlyRewindItem>(items),
             Months = new Collection<YearlyRewindMonth>(months),
+            FullTimePerGenre = true,
             ActiveDays = totals.Days.Count,
             Insights = BuildInsights(totals.Days, totals.Hourly, totals.Weekdays),
             Comparison = comparison,
@@ -216,7 +237,7 @@ internal static class YearlyRewindAggregator
                 {
                     foreach (var genre in genres)
                     {
-                        totals.MonthlyGenres[monthIndex][genre] = totals.MonthlyGenres[monthIndex].GetValueOrDefault(genre) + (allocated / active.Count / genres.Length);
+                        totals.MonthlyGenres[monthIndex][genre] = totals.MonthlyGenres[monthIndex].GetValueOrDefault(genre) + (allocated / active.Count);
                     }
                 }
             }
@@ -247,7 +268,7 @@ internal static class YearlyRewindAggregator
                 months[index].EstimatedSeconds += duration;
                 foreach (var genre in itemGenres[id])
                 {
-                    totals.MonthlyGenres[index][genre] = totals.MonthlyGenres[index].GetValueOrDefault(genre) + (duration / itemGenres[id].Length);
+                    totals.MonthlyGenres[index][genre] = totals.MonthlyGenres[index].GetValueOrDefault(genre) + duration;
                 }
             }
         }
@@ -276,7 +297,7 @@ internal static class YearlyRewindAggregator
                     month.EstimatedSeconds += duration;
                     foreach (var genre in itemGenres[id])
                     {
-                        totals.MonthlyGenres[monthIndex][genre] = totals.MonthlyGenres[monthIndex].GetValueOrDefault(genre) + (duration / itemGenres[id].Length);
+                        totals.MonthlyGenres[monthIndex][genre] = totals.MonthlyGenres[monthIndex].GetValueOrDefault(genre) + duration;
                     }
                 }
             }
@@ -371,7 +392,7 @@ internal static class YearlyRewindAggregator
 
             foreach (var name in names.Where(name => name.Length > 0))
             {
-                genres[name] = genres.GetValueOrDefault(name) + (item.ActiveSeconds / names.Length);
+                genres[name] = genres.GetValueOrDefault(name) + item.ActiveSeconds;
             }
         }
 

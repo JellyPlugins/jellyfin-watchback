@@ -48,6 +48,36 @@ for(const language of ['en','de','fr','es','pt','zh','tr','sv']) {
       await expect(music.locator('.jfw-rewind-top-tracks h3')).toHaveText(strings['rewind.topTracks']);
       await expect(music.locator('.jfw-rewind-top-tracks li')).toHaveCount(5);
       await expect(music.locator('.jfw-rewind-top-tracks li').first()).toContainText('Neon Skyline');
+      await expect(music.locator('.jfw-rewind-stat').nth(2)).toContainText(strings['rewind.series']);
+      await expect(music.locator('.jfw-rewind-stat').nth(3)).toContainText(strings['rewind.episodes']);
+      await expect(music.locator('.jfw-rewind-mix h3')).toHaveText(strings['rewind.mediaMix']);
+      await expect(music.locator('.jfw-rewind-mix .jfw-rewind-pie')).toHaveAttribute('aria-label',new RegExp(strings['rewind.musicMedia']));
+      await expect(music.locator('.jfw-rewind-streak-length')).toContainText('13');
+      await expect(music.locator('.jfw-rewind-streak-video strong')).toHaveText('7');
+      await expect(music.locator('.jfw-rewind-streak-music strong')).toHaveText('10');
+      for (const selector of ['.jfw-rewind-genres','.jfw-rewind-music-genres']) {
+        const chart=music.locator(selector);
+        const button=chart.locator('h3 button');
+        const info=chart.locator('.jfw-rewind-genre-info');
+        await expect(chart.locator('label')).toHaveCount(0);
+        await expect(button).toHaveAttribute('aria-expanded','false');
+        await expect(info).toBeHidden();
+        await button.click();
+        await expect(info).toBeVisible();
+        await expect(info).toHaveText(strings['rewind.genreInfo']);
+        await expect(info).toHaveCSS('color','rgb(0, 164, 220)');
+        const positions=await chart.evaluate(element=>{
+          const info=element.querySelector('.jfw-rewind-genre-info')!.getBoundingClientRect();
+          const controls=element.querySelector('.jfw-rewind-genre-controls')!.getBoundingClientRect();
+          const count=element.querySelector('.jfw-rewind-genre-controls p')!.getBoundingClientRect();
+          const select=element.querySelector('select')!.getBoundingClientRect();
+          return {infoBottom:info.bottom,controlsTop:controls.top,controlsRight:controls.right,selectRight:select.right,countCenter:count.y+count.height/2,selectCenter:select.y+select.height/2};
+        });
+        expect(positions.infoBottom).toBeLessThanOrEqual(positions.controlsTop);
+        expect(positions.selectRight).toBeCloseTo(positions.controlsRight,0);
+        expect(positions.countCenter).toBeCloseTo(positions.selectCenter,0);
+        await button.click(); await expect(info).toBeHidden();
+      }
       const genres=music.locator('.jfw-rewind-music-genres .jfw-rewind-pie');
       await expect(genres).toHaveAttribute('aria-label',new RegExp(strings['rewind.musicGenres']));
       const annualGenres=await genres.getAttribute('aria-label');
