@@ -75,5 +75,6 @@
   "rewind.hourUnitLong": "horas",
   "rewind.hourUnit": "h",
   "savingSettings": "Salvando configurações…",
-  "settingsError": "Erro ao salvar configurações."
+  "settingsError": "Erro ao salvar configurações.",
+  "rewind.playbackReporting": "Reproduções históricas importadas do Playback Reporting: {count}."
 }
