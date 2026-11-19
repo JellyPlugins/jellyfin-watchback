@@ -386,6 +386,8 @@ internal static class YearlyRewindAggregator
             MovieCount = previous.Items.Count(item => item.ItemType == "Movie"),
             EpisodeCount = previous.Items.Count(item => item.ItemType == "Episode"),
             SeriesCount = previous.Items.Where(item => item.SeriesId.HasValue).Select(item => item.SeriesId).Distinct().Count(),
+            TrackCount = previous.Items.Count(item => item.ItemType == "Audio"),
+            PlayCount = previous.Items.Sum(item => item.PlayCount),
             ActiveDays = previous.ActiveDays,
             Genres = new Collection<string>(genres.Keys.Order(StringComparer.Ordinal).ToArray()),
             TopGenre = genres.OrderByDescending(pair => pair.Value).ThenBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => pair.Key).FirstOrDefault()

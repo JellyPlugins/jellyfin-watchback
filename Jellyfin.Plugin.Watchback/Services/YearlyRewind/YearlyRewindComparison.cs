@@ -26,6 +26,11 @@ internal sealed record YearlyRewindComparison
 
     public int SeriesCount { get; init; }
 
+    // Older frozen comparisons did not retain music counts; missing values are unknown.
+    public int? TrackCount { get; init; }
+
+    public int? PlayCount { get; init; }
+
     public int ActiveDays { get; init; }
 
     public Collection<string> Genres { get; init; } = [];

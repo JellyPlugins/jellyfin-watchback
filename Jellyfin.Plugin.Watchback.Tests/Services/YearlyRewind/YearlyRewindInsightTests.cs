@@ -147,6 +147,29 @@ public sealed class YearlyRewindInsightTests : IDisposable
     }
 
     [Fact]
+    public void MusicComparisonRetainsTrackAndPlayCountsAcrossAnnualReports()
+    {
+        var from = Parse("2026-04-01T10:00:00Z");
+        var track = _movie with { ItemType = "Audio" };
+        Watch(from, from.AddMinutes(3), track);
+        Watch(from.AddHours(1), from.AddHours(1).AddMinutes(3), track);
+        var previous = Build();
+        var cutoff = previous.SnapshotAtUtc.AddYears(1);
+        var history = new UserActivityHistory();
+        history.Record(track, new UserItemActivity { Played = true, PlayCount = 100, LastPlayedDate = cutoff.AddDays(-1).UtcDateTime }, cutoff, cutoff);
+        var report = YearlyRewindAggregator.Build(_user, history, previous.SnapshotAtUtc, cutoff, cutoff, TimeZoneInfo.Utc, previous);
+        var comparison = report.Music!.Comparison!;
+        Assert.Equal(1, comparison.TrackCount);
+        Assert.Equal(2, comparison.PlayCount);
+        Assert.Equal(360, comparison.ActiveSeconds);
+        var store = new YearlyRewindStore(_directory);
+        Assert.True(store.Publish(report));
+        Assert.Equal(2, store.Load(_user)!.Music!.Comparison!.PlayCount);
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { Music = report.Music with { Comparison = comparison with { TrackCount = -1 } } }));
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { Music = report.Music with { Comparison = comparison with { PlayCount = -1 } } }));
+    }
+
+    [Fact]
     public void FirstYearSkippedYearsForeignUsersAndMissingCollectionHaveNoComparison()
     {
         var report = Build();

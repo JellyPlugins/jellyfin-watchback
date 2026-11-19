@@ -197,6 +197,7 @@ internal sealed class YearlyRewindStore
                 || !double.IsFinite(comparison.ActiveSeconds) || comparison.ActiveSeconds < 0
                 || !double.IsFinite(comparison.EstimatedSeconds) || comparison.EstimatedSeconds < 0 || comparison.EstimatedSeconds > comparison.ActiveSeconds
                 || comparison.ReconstructedItemCount < 0 || (comparison.EstimatedSeconds > 0 && comparison.ReconstructedItemCount == 0)
+                || comparison.TrackCount < 0 || comparison.PlayCount < 0
                 || comparison.MovieCount < 0 || comparison.EpisodeCount < 0 || comparison.SeriesCount < 0 || comparison.ActiveDays < 0
                 || comparison.Genres is null || comparison.Genres.Any(string.IsNullOrWhiteSpace)
                 || (comparison.TopGenre is not null && !comparison.Genres.Contains(comparison.TopGenre))))
