@@ -75,5 +75,6 @@
   "rewind.hourUnitLong": "小时",
   "rewind.hourUnit": "小时",
   "savingSettings": "正在保存设置…",
-  "settingsError": "保存设置失败。"
+  "settingsError": "保存设置失败。",
+  "rewind.playbackReporting": "从 Playback Reporting 导入的历史播放次数：{count}。"
 }

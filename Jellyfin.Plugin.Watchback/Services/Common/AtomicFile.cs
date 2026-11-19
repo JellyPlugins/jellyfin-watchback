@@ -165,6 +165,7 @@ internal static class AtomicFile
     }
 
     /// <summary>Deletes a temp file, swallowing the non-critical I/O errors that cleanup can raise.</summary>
+    /// <param name="tempPath">The path of the temporary file to delete.</param>
     private static void TryDeleteQuietly(string tempPath)
     {
         try

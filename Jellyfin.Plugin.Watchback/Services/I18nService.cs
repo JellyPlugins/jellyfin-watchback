@@ -67,6 +67,7 @@ public static class I18NService
     /// <summary>
     ///     Loads a translation dictionary from the embedded JSON resource for the given language code.
     /// </summary>
+    /// <param name="lang">The language code identifying the embedded translation resource.</param>
     private static Dictionary<string, string> LoadFromResource(string lang)
     {
         // Resource names follow: Jellyfin.Plugin.Watchback.i18n.<lang>.json

@@ -156,6 +156,7 @@ public class PluginLogEntryTests
     /// <summary>
     ///     Verifies that all standard log levels can be assigned.
     /// </summary>
+    /// <param name="level">The log level to assign.</param>
     [Theory]
     [InlineData("DEBUG")]
     [InlineData("INFO")]

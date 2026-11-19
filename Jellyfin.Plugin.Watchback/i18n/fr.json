@@ -75,5 +75,6 @@
   "rewind.hourUnitLong": "heures",
   "rewind.hourUnit": "h",
   "savingSettings": "Enregistrement des paramètres…",
-  "settingsError": "Erreur lors de l'enregistrement."
+  "settingsError": "Erreur lors de l'enregistrement.",
+  "rewind.playbackReporting": "Lectures historiques importées depuis Playback Reporting : {count}."
 }

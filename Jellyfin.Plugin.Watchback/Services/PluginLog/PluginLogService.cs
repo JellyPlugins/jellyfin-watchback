@@ -292,6 +292,7 @@ public class PluginLogService : IPluginLogService
     /// <summary>
     ///     Strips CR, LF, and NUL from a string to prevent log-forging via injected newlines.
     /// </summary>
+    /// <param name="value">The string to sanitize for logging.</param>
     private static string SanitizeForLog(string value)
         => value.Replace('\r', ' ').Replace('\n', ' ').Replace('\0', ' ').Replace('\t', ' ');
 

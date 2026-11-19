@@ -34,12 +34,14 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
     private readonly ILogger<UserActivityHistoryService> _logger;
     private readonly UserActivityHistoryStore _store;
     private readonly IUserActivityHistoryConsumer[] _consumers;
+    private readonly PlaybackReportingReader? _reporting;
     private readonly UserPlaybackTracker _tracker = new();
     private readonly Dictionary<Guid, UserActivityHistory> _histories = [];
     private readonly Dictionary<Guid, DateTimeOffset> _historyRetryAt = [];
     private readonly Dictionary<Guid, UserActivityCoverage> _coverage = [];
     private readonly HashSet<Guid> _dirty = [];
     private readonly Lock _gate = new();
+    private DateTimeOffset _nextReportingRefresh;
     private bool _initialized;
     private DateTimeOffset _lastTick;
     private DateTimeOffset _lastFlush;
@@ -58,8 +60,10 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         IApplicationPaths paths,
         TimeProvider clock,
         IEnumerable<IUserActivityHistoryConsumer> consumers,
-        ILogger<UserActivityHistoryService> logger)
+        ILogger<UserActivityHistoryService> logger,
+        PlaybackReportingReader? reporting = null)
     {
+        _reporting = reporting;
         _configuration = configuration;
         _sessions = sessions;
         _users = users;
@@ -86,7 +90,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 {
                     lock (_gate)
                     {
-                        Tick(_clock.GetUtcNow());
+                        Tick(_clock.GetUtcNow(), allowRefresh: true, notifyConsumers: true);
                     }
                 }
                 catch (Exception ex) when (!ex.IsFatal())
@@ -114,7 +118,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         }
     }
 
-    internal void Tick(DateTimeOffset now, bool allowRefresh = true)
+    internal void Tick(DateTimeOffset now, bool allowRefresh = true, bool notifyConsumers = true)
     {
         if (!_configuration.IsInitialized)
         {
@@ -136,6 +140,17 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
 
         var availableUsers = users.Where(user => !user.HasPermission(PermissionKind.IsDisabled) && TryHistory(user.Id, now, out _)).ToArray();
         var needsCurrent = _consumers.Any(consumer => consumer.NeedsCurrentState(now, availableUsers));
+        foreach (var user in availableUsers)
+        {
+            var history = History(user.Id);
+            if (!history.PlaybackReportingBeforeUtc.HasValue)
+            {
+                history.PlaybackReportingBeforeUtc = history.Coverage.Select(period => (DateTimeOffset?)period.StartUtc).Min() ?? now;
+                _dirty.Add(user.Id);
+            }
+        }
+
+        RefreshReporting(availableUsers, now);
         var refreshed = false;
         if (allowRefresh && (!_initialized || now >= _nextRefresh || needsCurrent) && now >= _retryRefresh)
         {
@@ -147,11 +162,19 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
             Flush();
         }
 
-        if (_initialized)
+        if (_initialized && notifyConsumers)
         {
             foreach (var consumer in _consumers)
             {
-                consumer.Tick(now, availableUsers, History, refreshed);
+                if (availableUsers.Length == 0)
+                {
+                    consumer.Tick(now, availableUsers, History, refreshed, true);
+                }
+
+                foreach (var group in availableUsers.GroupBy(user => _reporting is null || History(user.Id).PlaybackReportingImportCompleted))
+                {
+                    consumer.Tick(now, group.ToArray(), History, refreshed, group.Key);
+                }
             }
         }
 
@@ -162,6 +185,95 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         {
             Flush();
             _lastFlush = now;
+        }
+    }
+
+    private void RefreshReporting(User[] users, DateTimeOffset now)
+    {
+        var pending = users.Where(user => !History(user.Id).PlaybackReportingImportCompleted).ToArray();
+        if (_reporting is null || pending.Length == 0 || now < _nextReportingRefresh)
+        {
+            return;
+        }
+
+        try
+        {
+            var available = pending.ToDictionary(user => user.Id);
+            var imported = 0;
+            foreach (var entry in _reporting.Read(now))
+            {
+                if (!available.TryGetValue(entry.UserId, out var user))
+                {
+                    continue;
+                }
+
+                var history = History(user.Id);
+                if (entry.StartedAtUtc >= history.PlaybackReportingBeforeUtc)
+                {
+                    continue;
+                }
+
+                var existing = _library.GetItemById(entry.ItemId);
+                if (existing is not null && (_virtualItems.IsVirtual(existing) || !existing.IsVisible(user)))
+                {
+                    continue;
+                }
+
+                var episode = existing as Episode;
+                var genres = existing?.Genres ?? [];
+                if (genres.Length == 0 && episode?.Series is { } parent)
+                {
+                    genres = parent.Genres;
+                }
+
+                var item = new UserPlaybackItem
+                {
+                    ItemId = entry.ItemId, Name = entry.Name, ItemType = entry.ItemType,
+                    SeriesId = episode?.SeriesId, SeriesName = episode?.SeriesName,
+                    RuntimeTicks = Math.Max(0, existing?.RunTimeTicks ?? 0), Genres = new Collection<string>(genres)
+                };
+                if (history.Import(entry, item, now))
+                {
+                    imported++;
+                    _dirty.Add(user.Id);
+                }
+            }
+
+            if (imported > 0 && _logger.IsEnabled(LogLevel.Information))
+            {
+                _logger.LogInformation("Imported or updated {Count} historical Playback Reporting entries.", imported);
+            }
+
+            var saveFailed = false;
+            foreach (var user in pending)
+            {
+                var history = History(user.Id);
+                history.PlaybackReportingImportCompleted = true;
+                try
+                {
+                    // Persist the completion marker and imported rows atomically before
+                    // allowing publication or skipping the source on subsequent starts.
+                    _store.Save(user.Id, history);
+                    _dirty.Remove(user.Id);
+                }
+                catch (Exception ex) when (!ex.IsFatal())
+                {
+                    history.PlaybackReportingImportCompleted = false;
+                    _coverage.Remove(user.Id);
+                    _dirty.Add(user.Id);
+                    saveFailed = true;
+                    _logger.LogWarning(ex, "Could not persist the initial Playback Reporting import for user {UserId}; retrying in one minute.", user.Id);
+                }
+            }
+
+            _nextReportingRefresh = saveFailed ? now.AddMinutes(1) : default;
+        }
+        catch (Exception ex) when (!ex.IsFatal())
+        {
+            // Collection continues, but do not freeze a new annual report while its import is
+            // incomplete. Previously published reports remain available and unchanged.
+            _nextReportingRefresh = now.AddMinutes(1);
+            _logger.LogWarning(ex, "Could not import Playback Reporting history; retrying before publishing new annual reports.");
         }
     }
 
@@ -258,12 +370,21 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
             }
 
             var now = _clock.GetUtcNow();
-            Tick(now, false); // A due cutoff waits for this task snapshot before its first publication.
+            Tick(now, false, false); // A due cutoff waits for this task snapshot before its first publication.
             Apply(snapshot, now);
             _initialized = true;
             foreach (var consumer in _consumers)
             {
-                consumer.Tick(now, _users.GetUsers().Where(user => !user.HasPermission(PermissionKind.IsDisabled) && TryHistory(user.Id, now, out _)).ToArray(), History, true);
+                var users = _users.GetUsers().Where(user => !user.HasPermission(PermissionKind.IsDisabled) && TryHistory(user.Id, now, out _)).ToArray();
+                if (users.Length == 0)
+                {
+                    consumer.Tick(now, users, History, true, true);
+                }
+
+                foreach (var group in users.GroupBy(user => _reporting is null || History(user.Id).PlaybackReportingImportCompleted))
+                {
+                    consumer.Tick(now, group.ToArray(), History, true, group.Key);
+                }
             }
 
             Flush();
@@ -380,7 +501,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                     return;
                 }
 
-                Tick(now, false);
+                Tick(now, false, true);
                 if (args.Item is not Video video || _virtualItems.IsVirtual(args.Item) || args.IsAutomated)
                 {
                     return;

@@ -997,6 +997,8 @@ public class PluginLogServiceTests : IDisposable
     /// <summary>
     ///     Verifies GetLevelIndex for known and unknown levels.
     /// </summary>
+    /// <param name="level">The log level to look up.</param>
+    /// <param name="expectedIndex">The expected index for the log level.</param>
     [Theory]
     [InlineData("DEBUG", 0)]
     [InlineData("INFO", 1)]

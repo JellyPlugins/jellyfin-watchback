@@ -122,7 +122,9 @@ internal sealed class YearlyRewindStore
                 || item.ItemType is not ("Movie" or "Episode") || !double.IsFinite(item.ActiveSeconds)
                 || item.ActiveSeconds < 0 || item.PlayCount < 0 || item.Genres is null
                 || !double.IsFinite(item.EstimatedSeconds) || item.EstimatedSeconds < 0 || item.EstimatedSeconds > item.ActiveSeconds
-                || (item.EstimatedSeconds > 0 && !item.HasReconstructedActivity))
+                || (item.EstimatedSeconds > 0 && !item.HasReconstructedActivity)
+                || item.PlaybackReportingPlayCount < 0 || item.PlaybackReportingPlayCount > item.PlayCount
+                || (item.PlaybackReportingPlayCount > 0 && !item.HasReconstructedActivity))
             {
                 throw new InvalidDataException("The rewind snapshot contains an invalid item.");
             }

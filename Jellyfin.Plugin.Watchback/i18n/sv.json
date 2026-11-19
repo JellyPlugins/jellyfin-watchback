@@ -75,5 +75,6 @@
   "rewind.hourUnitLong": "timmar",
   "rewind.hourUnit": "h",
   "savingSettings": "Sparar inställningar…",
-  "settingsError": "Kunde inte spara inställningar."
+  "settingsError": "Kunde inte spara inställningar.",
+  "rewind.playbackReporting": "Tidigare uppspelningar importerade från Playback Reporting: {count}."
 }

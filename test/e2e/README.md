@@ -9,6 +9,8 @@ bash test/e2e/scripts/run.sh --keep
 docker compose -f test/e2e/compose.yml down
 ```
 
+The server suite includes a disabled Playback Reporting installation fixture with an inert assembly marker and a real SQLite history database. It verifies a one-time import into a newly created user's journal, its durable completion marker, source immutability, ignored later source changes, and frozen reports without running a second playback collector.
+
 Offline fixtures can run independently after syncing the production demo assets:
 
 ```sh

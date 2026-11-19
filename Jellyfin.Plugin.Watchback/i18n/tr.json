@@ -75,5 +75,6 @@
   "rewind.hourUnitLong": "saat",
   "rewind.hourUnit": "sa",
   "savingSettings": "Ayarlar kaydediliyor…",
-  "settingsError": "Ayarlar kaydedilemedi."
+  "settingsError": "Ayarlar kaydedilemedi.",
+  "rewind.playbackReporting": "Playback Reporting üzerinden aktarılan geçmiş oynatmalar: {count}."
 }

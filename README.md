@@ -1,7 +1,7 @@
 # jellyfin-watchback
 
 [![Build and tests](https://github.com/JellyPlugins/jellyfin-watchback/actions/workflows/pr.yml/badge.svg)](https://github.com/JellyPlugins/jellyfin-watchback/actions/workflows/pr.yml)
-[![E2E](https://img.shields.io/badge/e2e%20tests-9-blue)](test/e2e/COVERAGE.md)
+[![E2E](https://img.shields.io/badge/e2e%20tests-10-blue)](test/e2e/COVERAGE.md)
 [![Jellyfin](https://img.shields.io/badge/Jellyfin-12.4-blueviolet)](https://jellyfin.org/)
 
 Your personal annual Jellyfin playback rewind.
@@ -20,6 +20,17 @@ Enable **Yearly Rewind** in the plugin settings and choose its annual display pe
 
 The current collector covers video playback. Music and books are not included.
 
+## Optional Playback Reporting history
+
+Watchback checks for retained Playback Reporting history once for each available user, when it first starts collecting that user's activity. When Playback Reporting is installed, its existing `playback_reporting.db` supplies the initial historical data. A disabled installation with retained data also works. No additional switch, API key, or Playback Reporting dependency is required for normal Watchback operation.
+
+Historical films and episodes are imported into each user's existing Watchback journal, including repeated plays and recorded durations. The boundary is the start of Watchback's own recording for that user and survives restarts; later Playback Reporting entries are excluded. The imported data and completion marker are saved together. After completion, Watchback records activity itself and never reimports or updates that user's history from Playback Reporting, including after restarts or before annual reports. Matching Jellyfin baseline estimates are suppressed to avoid counting a playback twice. Known media metadata is enriched from the current library; deleted titles can retain their recorded names and durations without inventing missing genres or series information.
+
+Playback Reporting stores a session start and total duration, not individual pause intervals. Historical time is assigned to the start month, conservatively capped at Watchback's collection boundary and the report cutoff, and displayed as reconstructed activity. It contributes to totals, charts, and play counts; precise viewing patterns, active days, and streaks still use Watchback's measured intervals only. Offset-free timestamps use the server's current time zone, so past server time-zone changes cannot be recovered exactly.
+
+The source database is opened read-only. Invalid rows and unknown or disabled users are ignored. Failed initial imports or journal saves are retried after one minute without stopping Watchback's collector; relevant new reports wait for the initial import to complete, while existing reports remain available and unchanged. A confirmed missing plugin or database completes the initial check with no imported rows; installing Playback Reporting afterward does not trigger another import for that user. Newly available users receive their own initial check. Existing journals without a completion marker receive one final initial import using their original recording boundary. Only history still retained by Playback Reporting can be imported, and importing later never rewrites a frozen annual report.
+
+
 ## Installation and demo
 
 This repository starts with an unreleased `1.0.0.0` development version. Build from source until the first release is published. Release automation fills the catalog download URL, timestamp and checksum; the development manifest is not yet an installable catalog entry.
@@ -37,7 +48,7 @@ The [GitHub Pages demo](https://jellyplugins.github.io/jellyfin-watchback/) is d
 Watchback owns `<Jellyfin DataPath>/jellyfin-watchback/`:
 
 ```text
-activity-history/<user-id>.json       Measured playback and observed Jellyfin state
+activity-history/<user-id>.json       Measured playback, observed state and imported history
 yearly-rewind/reports/<user-id>.json  One frozen report per user
 yearly-rewind/pending/<user-id>.json  Crash-safe pending annual publication
 jellyfin-watchback-useractivity-latest.json  Latest Jellyfin baseline

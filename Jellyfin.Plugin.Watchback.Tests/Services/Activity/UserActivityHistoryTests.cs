@@ -20,6 +20,7 @@ public sealed class UserActivityHistoryTests : IDisposable
     private readonly string _directory = Path.Join(Path.GetTempPath(), "jfw-shared-history-" + Guid.NewGuid().ToString("N"));
     private readonly Guid _userId = Guid.NewGuid();
     private readonly DateTimeOffset _cutoff = new(2026, 12, 15, 0, 0, 0, TimeSpan.Zero);
+    private readonly DateTimeOffset _localCutoff = new(TimeZoneInfo.ConvertTimeToUtc(new DateTime(2026, 12, 15), TimeZoneInfo.Local));
     private readonly UserPlaybackItem _movie = new() { ItemId = Guid.NewGuid(), Name = "Movie", ItemType = "Movie", RuntimeTicks = TimeSpan.TicksPerHour, Genres = [" Drama ", "Drama"] };
 
     public void Dispose()
@@ -166,11 +167,11 @@ public sealed class UserActivityHistoryTests : IDisposable
         users.Setup(value => value.GetUsers()).Returns([user]);
         users.Setup(value => value.GetUserById(_userId)).Returns(user);
         var source = new Mock<IUserActivityInsightsService>();
-        var snapshot = new UserActivityResult { GeneratedAt = _cutoff.UtcDateTime };
+        var snapshot = new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime };
         snapshot.Items.Add(new UserActivitySummary
         {
             ItemId = _movie.ItemId, ItemName = "Movie", ItemType = "Movie", RuntimeTicks = _movie.RuntimeTicks,
-            UserActivities = [State(_cutoff.AddDays(-10))]
+            UserActivities = [State(_localCutoff.AddDays(-10))]
         });
         source.Setup(value => value.BuildActivityReport()).Returns(snapshot);
         var cache = new Mock<IUserActivityCacheService>();
@@ -178,8 +179,8 @@ public sealed class UserActivityHistoryTests : IDisposable
         var consumer = new YearlyRewindService(configuration.Object, paths.Object, NullLogger<YearlyRewindService>.Instance);
         using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
             new VirtualItemDetector(paths.Object, NullLogger<VirtualItemDetector>.Instance), source.Object, cache.Object,
-            paths.Object, new FixedClock(_cutoff), [consumer], NullLogger<UserActivityHistoryService>.Instance);
-        service.Tick(_cutoff);
+            paths.Object, new FixedClock(_localCutoff), [consumer], NullLogger<UserActivityHistoryService>.Instance);
+        service.Tick(_localCutoff);
         var journal = Path.Join(_directory, "jellyfin-watchback", "activity-history", _userId.ToString("N") + ".json");
         Assert.True(File.Exists(journal));
         if (!rewind)
@@ -187,14 +188,14 @@ public sealed class UserActivityHistoryTests : IDisposable
             Assert.Single(new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback")).Load(_userId).Observations);
             Assert.Null(consumer.Load(_userId));
             config.YearlyRewindEnabled = true;
-            service.Tick(_cutoff.AddMinutes(1));
+            service.Tick(_localCutoff.AddMinutes(1));
         }
         var report = consumer.Load(_userId)!;
         Assert.NotNull(report);
         Assert.Equal(1, report.ReconstructedItemCount);
         snapshot.Items.Clear();
         service.Record(snapshot);
-        service.Tick(_cutoff.AddHours(2));
+        service.Tick(_localCutoff.AddHours(2));
         Assert.Equal(report.SnapshotId, consumer.Load(_userId)!.SnapshotId);
         Assert.True(File.Exists(journal));
         cache.Verify(value => value.SaveResult(It.IsAny<UserActivityResult>()), Times.AtLeastOnce);
@@ -259,15 +260,15 @@ public sealed class UserActivityHistoryTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(brokenPath)!);
         var invalid = corruption == "schema" ? "{\"schemaVersion\":999}" : "not JSON";
         File.WriteAllText(brokenPath, invalid);
-        var brokenState = State(_cutoff.AddDays(-10));
+        var brokenState = State(_localCutoff.AddDays(-10));
         brokenState.UserId = broken.Id;
         var snapshot = new UserActivityResult
         {
-            GeneratedAt = _cutoff.UtcDateTime,
+            GeneratedAt = _localCutoff.UtcDateTime,
             Items = [new UserActivitySummary
             {
                 ItemId = _movie.ItemId, ItemName = "Movie", ItemType = "Movie", RuntimeTicks = _movie.RuntimeTicks,
-                UserActivities = [brokenState, State(_cutoff.AddDays(-10))]
+                UserActivities = [brokenState, State(_localCutoff.AddDays(-10))]
             }]
         };
         var source = new Mock<IUserActivityInsightsService>();
@@ -275,8 +276,8 @@ public sealed class UserActivityHistoryTests : IDisposable
         var consumer = new YearlyRewindService(configuration.Object, paths.Object, NullLogger<YearlyRewindService>.Instance);
         using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
             new VirtualItemDetector(paths.Object, NullLogger<VirtualItemDetector>.Instance), source.Object, Mock.Of<IUserActivityCacheService>(),
-            paths.Object, new FixedClock(_cutoff), [consumer], NullLogger<UserActivityHistoryService>.Instance);
-        service.Tick(_cutoff);
+            paths.Object, new FixedClock(_localCutoff), [consumer], NullLogger<UserActivityHistoryService>.Instance);
+        service.Tick(_localCutoff);
         var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
         Assert.Single(store.Load(healthy.Id).Observations);
         var published = consumer.Load(healthy.Id)!;
@@ -288,9 +289,9 @@ public sealed class UserActivityHistoryTests : IDisposable
         Assert.Equal(2, store.Load(healthy.Id).Observations.Count);
         Assert.Equal(invalid, File.ReadAllText(brokenPath));
         store.Save(broken.Id, new UserActivityHistory()); // Simulate repairing only the failed user's file.
-        service.Tick(_cutoff.AddSeconds(30));
+        service.Tick(_localCutoff.AddSeconds(30));
         Assert.Null(consumer.Load(broken.Id));
-        service.Tick(_cutoff.AddMinutes(1));
+        service.Tick(_localCutoff.AddMinutes(1));
         Assert.NotNull(consumer.Load(broken.Id));
         Assert.Single(store.Load(broken.Id).Observations);
         Assert.Equal(published.SnapshotId, consumer.Load(healthy.Id)!.SnapshotId);

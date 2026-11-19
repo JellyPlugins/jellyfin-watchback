@@ -28,6 +28,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<YearlyRewindService>();
         serviceCollection.AddSingleton<IUserActivityHistoryConsumer>(services => services.GetRequiredService<YearlyRewindService>());
         serviceCollection.AddHostedService<LegacyDataImportService>();
+        serviceCollection.AddSingleton<PlaybackReportingReader>();
         serviceCollection.AddSingleton<UserActivityHistoryService>();
         serviceCollection.AddSingleton<IUserActivityHistoryRecorder>(services => services.GetRequiredService<UserActivityHistoryService>());
         serviceCollection.AddSingleton<IHostedService>(services => services.GetRequiredService<UserActivityHistoryService>());

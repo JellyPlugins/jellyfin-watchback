@@ -74,6 +74,7 @@ internal static class BatchFallbackHelper
     /// <summary>
     ///     True if the aggregate (flattened) contains at least one OperationCanceledException.
     /// </summary>
+    /// <param name="agg">The aggregate exception to inspect for cancellation.</param>
     private static bool ContainsOperationCanceled(AggregateException agg)
     {
         return agg.Flatten().InnerExceptions.Any(inner => inner is OperationCanceledException);
