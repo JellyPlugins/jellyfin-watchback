@@ -53,7 +53,7 @@ internal static class YearlyRewindAggregator
         TimeZoneInfo zone,
         YearlyRewindSnapshot? previous)
     {
-        var sessions = history.Sessions.Where(session => session.QualifiedAtUtc <= cutoff && (session.Item.ItemType is "Movie" or "Episode" or "Audio")).ToArray();
+        var sessions = history.Sessions.Where(session => session.QualifiedAtUtc <= cutoff).ToArray();
         var itemGroups = sessions.GroupBy(session => session.Item.ItemId).ToArray();
         var itemGenres = itemGroups.ToDictionary(group => group.Key, group => GenreNames(group.First().Item));
         var metadata = itemGroups.ToDictionary(group => group.Key, group => group.First().Item);

@@ -215,7 +215,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 }
 
                 var history = History(user.Id);
-                if (history.IsPlaybackReportingImportCompleted(entry.ItemType) || entry.StartedAtUtc >= history.PlaybackReportingBoundary(entry.ItemType))
+                if (history.IsPlaybackReportingImportCompleted(entry.ItemType) || entry.StartedAtUtc >= history.PlaybackReportingBoundary(entry.ItemType).GetValueOrDefault(now))
                 {
                     continue;
                 }

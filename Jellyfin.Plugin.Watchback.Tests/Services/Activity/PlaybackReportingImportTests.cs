@@ -1012,6 +1012,32 @@ public sealed class PlaybackReportingImportTests : IDisposable
         Assert.NotNull(store.Load(_userId)!.Music!.Comparison);
     }
 
+    [Theory]
+    [InlineData(false, false, "unknown", "unknown", false)]
+    [InlineData(false, true, "before", "overlap", true)]
+    [InlineData(true, false, "overlap", "before", true)]
+    [InlineData(false, false, "before", "before", true)]
+    [InlineData(false, false, "overlap", "before", false)]
+    [InlineData(false, false, "before", "overlap", false)]
+    [InlineData(false, true, "unknown", "overlap", false)]
+    public void PublicationWaitsForEachRelevantPendingImport(bool videoCompleted, bool musicCompleted, string videoWindow, string musicWindow, bool publish)
+    {
+        var configuration = new Mock<IPluginConfigurationService>();
+        configuration.SetupGet(value => value.IsInitialized).Returns(true);
+        configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration { YearlyRewindEnabled = true });
+        var start = YearlyRewindWindow.PeriodStart(_localCutoff, "12-15", TimeZoneInfo.Local);
+        DateTimeOffset? Boundary(string window) => window == "unknown" ? null : window == "before" ? start : start.AddMinutes(1);
+        var history = new UserActivityHistory
+        {
+            PlaybackReportingBeforeUtc = Boundary(videoWindow), PlaybackReportingImportCompleted = videoCompleted,
+            MusicRecordingStartedAtUtc = Boundary(musicWindow), PlaybackReportingMusicImportCompleted = musicCompleted
+        };
+        var user = new User("test", "default", "default") { Id = _userId };
+        var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
+        ((IUserActivityHistoryConsumer)consumer).Tick(_localCutoff, [user], _ => history, true, false);
+        Assert.Equal(publish, consumer.Load(_userId) is not null);
+    }
+
     private sealed class TestClock : TimeProvider
     {
         public DateTimeOffset Now { get; set; }
