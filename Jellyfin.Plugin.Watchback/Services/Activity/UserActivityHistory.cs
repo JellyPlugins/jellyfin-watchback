@@ -28,6 +28,9 @@ internal sealed class UserActivityHistory
     // on restart, even if the Playback Reporting plugin is installed later.
     public DateTimeOffset? PlaybackReportingBeforeUtc { get; set; }
 
+    // Old video-only coverage must not suppress music baseline reconstruction.
+    public DateTimeOffset? MusicRecordingStartedAtUtc { get; set; }
+
     public bool PlaybackReportingImportCompleted { get; set; }
 
     public Collection<ImportedPlayback> ImportedPlayback { get; init; } = [];

@@ -18,7 +18,41 @@ internal static class YearlyRewindAggregator
         TimeZoneInfo zone,
         YearlyRewindSnapshot? previous = null)
     {
-        var sessions = history.Sessions.Where(session => session.QualifiedAtUtc <= cutoff && (session.Item.ItemType is "Movie" or "Episode")).ToArray();
+        var video = BuildMedia(userId, SelectMedia(history, false), start, cutoff, generated, zone, previous);
+        var music = BuildMedia(userId, SelectMedia(history, true), start, cutoff, generated, zone, previous?.Music);
+        return video with { Music = music.Items.Count > 0 ? music : null };
+    }
+
+    private static UserActivityHistory SelectMedia(UserActivityHistory history, bool music)
+    {
+        bool Matches(UserPlaybackItem item) => music ? item.ItemType == "Audio" : item.ItemType is "Movie" or "Episode";
+        var musicStart = history.MusicRecordingStartedAtUtc;
+        return new UserActivityHistory
+        {
+            Sessions = new Collection<UserPlaybackSession>(history.Sessions.Where(row => Matches(row.Item)).ToArray()),
+            Observations = new Collection<UserPlaybackObservation>(history.Observations.Where(row => Matches(row.Item)).ToArray()),
+            ImportedPlayback = new Collection<ImportedPlayback>(history.ImportedPlayback.Where(row => Matches(row.Item)).ToArray()),
+            PlaybackReportingBeforeUtc = history.PlaybackReportingBeforeUtc,
+            Coverage = new Collection<UserActivityCoverage>(history.Coverage
+                .Where(period => !music || !musicStart.HasValue || period.EndUtc > musicStart.Value)
+                .Select(period => new UserActivityCoverage
+                {
+                    StartUtc = music && musicStart.HasValue && period.StartUtc < musicStart.Value ? musicStart.Value : period.StartUtc,
+                    EndUtc = period.EndUtc
+                }).ToArray())
+        };
+    }
+
+    private static YearlyRewindSnapshot BuildMedia(
+        Guid userId,
+        UserActivityHistory history,
+        DateTimeOffset start,
+        DateTimeOffset cutoff,
+        DateTimeOffset generated,
+        TimeZoneInfo zone,
+        YearlyRewindSnapshot? previous)
+    {
+        var sessions = history.Sessions.Where(session => session.QualifiedAtUtc <= cutoff && (session.Item.ItemType is "Movie" or "Episode" or "Audio")).ToArray();
         var itemGroups = sessions.GroupBy(session => session.Item.ItemId).ToArray();
         var itemGenres = itemGroups.ToDictionary(group => group.Key, group => GenreNames(group.First().Item));
         var metadata = itemGroups.ToDictionary(group => group.Key, group => group.First().Item);
@@ -310,7 +344,7 @@ internal static class YearlyRewindAggregator
         // A lifetime counter is never assigned wholesale to a year. Retain at most one conservative
         // baseline per title, outside measured coverage, without inventing dates or playback intervals.
         return history.Observations.Where(row => row.ObservedAtUtc <= generated && row.LastPlayedAtUtc >= start && row.LastPlayedAtUtc < cutoff
-                && (row.Item.ItemType is "Movie" or "Episode") && (row.Played || row.PlayCount > 0 || row.PlaybackPositionTicks > 0)
+                && (row.Item.ItemType is "Movie" or "Episode" or "Audio") && (row.Played || row.PlayCount > 0 || row.PlaybackPositionTicks > 0)
                 && !history.Coverage.Any(period => row.LastPlayedAtUtc >= period.StartUtc && row.LastPlayedAtUtc < period.EndUtc))
             .GroupBy(row => row.Item.ItemId)
             .Select(group => group.OrderByDescending(row => row.LastPlayedAtUtc).ThenByDescending(row => row.SourceGeneratedAtUtc).First())

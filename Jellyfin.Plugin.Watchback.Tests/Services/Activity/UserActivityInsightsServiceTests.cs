@@ -50,6 +50,22 @@ public class UserActivityInsightsServiceTests
         }
     }
 
+    [Fact]
+    public void MusicBaselineIncludesAudioMetadataAndQueriesBothMediaTypes()
+    {
+        var (svc, lib, um, ud) = CreateSut();
+        var user = User("listener");
+        var track = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Name = "Track", Genres = ["Jazz"], RunTimeTicks = TimeSpan.TicksPerMinute * 3 };
+        um.Setup(manager => manager.GetUsers()).Returns([user]);
+        lib.Setup(manager => manager.GetItemList(It.IsAny<InternalItemsQuery>())).Returns([track]);
+        ud.Setup(manager => manager.GetUserData(user, track)).Returns(new UserItemData { Key = track.Id.ToString(), Played = true, PlayCount = 5, LastPlayedDate = DateTime.UtcNow });
+        var item = Assert.Single(svc.BuildActivityReport().Items);
+        Assert.Equal("Audio", item.ItemType);
+        Assert.Equal("Jazz", Assert.Single(item.Genres));
+        Assert.Equal(track.RunTimeTicks, item.RuntimeTicks);
+        lib.Verify(manager => manager.GetItemList(It.Is<InternalItemsQuery>(query => query.MediaTypes.Contains(Jellyfin.Data.Enums.MediaType.Audio) && query.MediaTypes.Contains(Jellyfin.Data.Enums.MediaType.Video))), Times.Once);
+    }
+
     // These lock in observable behavior so internal fetch-path swaps
     // (e.g. batch user-data on Jellyfin 12+) can be verified against the same suite.
 

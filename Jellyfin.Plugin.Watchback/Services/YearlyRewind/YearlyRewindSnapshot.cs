@@ -41,6 +41,9 @@ internal sealed record YearlyRewindSnapshot
 
     public DateTimeOffset? CollectionStartedAtUtc { get; init; }
 
+    // Separate media aggregates preserve existing video totals and frozen schema-1 reports.
+    public YearlyRewindSnapshot? Music { get; init; }
+
     public Collection<YearlyRewindMonth> Months { get; init; } = [];
 
     public Collection<YearlyRewindItem> Items { get; init; } = [];

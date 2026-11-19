@@ -255,6 +255,59 @@
         addStat(stats, reconstructedCount() && !hasMeasuredPlayback() ? '—' : number(value(report, 'ActiveDays') || 0), text(reconstructedCount() ? 'measuredActiveDays' : 'activeDays'), 'activeDays');
         panel.append(stats);
     }
+    function renderMusic() {
+        var music = value(report, 'Music');
+        var items = value(music, 'Items') || [];
+        if (!items.length) return;
+        var root = section(panel, text('music'), 'jfw-rewind-music');
+        var total = items.reduce(function (sum, item) { return sum + (value(item, 'ActiveSeconds') || 0); }, 0);
+        var estimated = items.some(function (item) { return value(item, 'HasReconstructedActivity'); });
+        var stats = node('div', null, 'jfw-rewind-stats');
+        addStat(stats, estimated && !total ? '—' : (estimated ? '≈ ' : '') + number(total / 3600, 1), text('listeningHours'), 'schedule');
+        addStat(stats, number(items.length), text('tracks'), 'music');
+        addStat(stats, number(items.reduce(function (sum, item) { return sum + (value(item, 'PlayCount') || 0); }, 0)), text('musicPlays'), 'play');
+        root.append(stats);
+        if (estimated) root.append(node('p', text('musicReconstructed'), 'jfw-rewind-notice'));
+        if (value(music, 'DataState') === 'Partial') root.append(node('p', text('partial'), 'jfw-rewind-secondary'));
+        if (value(music, 'PlaybackReportingPlayCount') > 0) root.append(node('p', text('playbackReporting').replace('{count}', number(value(music, 'PlaybackReportingPlayCount'))), 'jfw-rewind-secondary'));
+        var top = section(root, text('topTracks'), 'jfw-rewind-top-tracks');
+        top.append(node('p', text('byListenTime'), 'jfw-rewind-secondary'));
+        var list = node('ol');
+        items.slice().sort(function (a, b) {
+            return (value(b, 'ActiveSeconds') || 0) - (value(a, 'ActiveSeconds') || 0)
+                || String(value(a, 'Name')).localeCompare(String(value(b, 'Name')))
+                || String(value(a, 'ItemId')).localeCompare(String(value(b, 'ItemId')));
+        }).slice(0, 5).forEach(function (item) {
+            var duration = value(item, 'ActiveSeconds') || 0;
+            var amount = value(item, 'HasReconstructedActivity') && !duration ? '—' : (value(item, 'HasReconstructedActivity') ? '≈ ' : '') + number(duration / 3600, 2) + ' ' + text('hourUnit');
+            list.append(node('li', value(item, 'Name') + ' · ' + amount + ' · ' + number(value(item, 'PlayCount') || 0) + ' ' + text('musicPlays')));
+        });
+        top.append(list);
+        if (!total) { root.append(node('p', text('noListeningDuration'))); return; }
+        var months = value(music, 'Months') || [];
+        var genres = section(root, text('musicGenres'), 'jfw-rewind-music-genres');
+        var body = node('div', null, 'jfw-rewind-pie-body');
+        function show(weights) { pie(body, text('musicGenres'), genreEntries(weights)); }
+        if (months.length && months.every(function (month) { return Array.isArray(value(month, 'Genres')); })) {
+            var label = node('label', text('genrePeriod'), 'jfw-rewind-genre-period'); label.htmlFor = 'jfw-rewind-music-period';
+            var select = node('select', null, 'jfw-rewind-select'); select.id = label.htmlFor;
+            var all = node('option', text('wholePeriod')); all.value = 'all'; select.append(all);
+            months.forEach(function (month, index) {
+                var option = node('option', date(value(month, 'StartUtc'), value(music, 'TimeZoneId'))); option.value = String(index); select.append(option);
+            });
+            select.addEventListener('change', function () {
+                show(select.value === 'all' ? genreWeights(items) : new Map(value(months[Number(select.value)], 'Genres').map(function (genre) { return [value(genre, 'Name') || '', value(genre, 'ActiveSeconds') || 0]; })));
+            });
+            genres.append(label, select);
+        }
+        genres.append(body, node('p', text('musicGenreAllocation'), 'jfw-rewind-secondary')); show(genreWeights(items));
+        if (months.length) {
+            var chart = section(root, text('musicMonths'), 'jfw-rewind-music-months');
+            distribution(chart, months.map(function (month) {
+                return (value(month, 'EstimatedSeconds') > 0 ? '≈ ' : '') + new Intl.DateTimeFormat(locale, { timeZone: value(music, 'TimeZoneId') || 'UTC', month: 'long', year: 'numeric' }).format(new Date(value(month, 'StartUtc')));
+            }), months.map(function (month) { return value(month, 'ActiveSeconds') || 0; }));
+        }
+    }
     function render() {
         if (!panel) return;
         panel.replaceChildren();
@@ -265,6 +318,7 @@
         heading.append(node('span', text('title') + ' ' + year(cutoff, value(report, 'TimeZoneId'))));
         heading.append(' ', node('span', '(' + date(start) + ' – ' + date(new Date(new Date(cutoff).getTime() - 1).toISOString()) + ')', 'jfw-rewind-period'));
         panel.append(heading);
+        renderMusic();
         var state = value(report, 'DataState');
         var jellyfinCount = value(report, 'JellyfinReconstructedItemCount');
         if (jellyfinCount === undefined || jellyfinCount === null) jellyfinCount = (value(report, 'Items') || []).filter(function (item) {
@@ -408,6 +462,11 @@
         partial: 'This rewind includes only the periods for which playback was recorded.', notCollected: 'Playback was not recorded before this rewind’s cutoff.',
         empty: 'No qualifying playback was recorded.', hourUnit: 'h', hourUnitLong: 'hours', hours: 'Hours watched', movies: 'Films', episodes: 'Episodes', series: 'Series', activeDays: 'Active days',
         topGenres: 'Your top genres', months: 'Your viewing year',
+        music: 'Your music year', listeningHours: 'Hours listened', tracks: 'Tracks', musicPlays: 'Plays',
+        topTracks: 'Your top 5 tracks', byListenTime: 'Ranked by listening time.', musicGenres: 'Your music genres', musicMonths: 'Your listening year',
+        musicGenreAllocation: 'Listening time is divided equally among a track’s genres.',
+        musicReconstructed: 'Includes reconstructed music activity. Listening time may be estimated or unavailable; play counts may be incomplete.',
+        noListeningDuration: 'No listening duration is available for the reconstructed tracks.',
         mediaMix: "Your film / series mix",
         byWatchTime: "By watch time (hours)",
         genreCount: "Distinct genres: {count}",
@@ -454,6 +513,8 @@
     // Clock, film and TV paths match Shared.js's existing plugin icons.
     var pieColors = ['#00a4dc', '#e67e22', '#2ecc71', '#e74c3c', '#9b59b6', '#f1c40f'];
     var statIcons = {
+        "music": "M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z",
+        "play": "M8 5v14l11-7z",
         "schedule": "M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
         "movie": "M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z",
         "tv": "M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z",
@@ -473,7 +534,7 @@
 .jfw-rewind-stat strong{font-size:1.8em;font-weight:700;color:var(--rewind-primary)}
 .jfw-rewind-notice{padding:1em;border-inline-start:4px solid var(--rewind-primary)}
 .jfw-rewind section{min-width:0;background:rgba(255,255,255,.03);border:1px solid var(--rewind-border);border-radius:var(--radius-lg,8px);padding:.8em 1.1em 1.1em}
-.jfw-rewind > section{margin-top:1.2em}
+.jfw-rewind > section,.jfw-rewind-music > section{margin-top:1.2em}.jfw-rewind-top-tracks li{padding:.35em 0;overflow-wrap:anywhere}
 .jfw-rewind section > h3{font-size:1.1em;font-weight:600;margin:0 0 .8em;padding-bottom:.5em;border-bottom:2px solid var(--rewind-border)}
 .jfw-rewind-chart-unit{font-size:.85em;font-weight:400;opacity:.6}
 .jfw-rewind-chart-scroll{overflow-x:auto;scrollbar-width:thin}.jfw-rewind-chart{display:flex;gap:clamp(4px,1vw,16px);min-width:0;padding:.5em 0}

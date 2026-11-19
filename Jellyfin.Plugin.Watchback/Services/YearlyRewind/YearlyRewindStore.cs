@@ -119,7 +119,7 @@ internal sealed class YearlyRewindStore
         foreach (var item in snapshot.Items)
         {
             if (item is null || item.ItemId == Guid.Empty || item.Name is null
-                || item.ItemType is not ("Movie" or "Episode") || !double.IsFinite(item.ActiveSeconds)
+                || item.ItemType is not ("Movie" or "Episode" or "Audio") || !double.IsFinite(item.ActiveSeconds)
                 || item.ActiveSeconds < 0 || item.PlayCount < 0 || item.Genres is null
                 || !double.IsFinite(item.EstimatedSeconds) || item.EstimatedSeconds < 0 || item.EstimatedSeconds > item.ActiveSeconds
                 || (item.EstimatedSeconds > 0 && !item.HasReconstructedActivity)
@@ -128,6 +128,18 @@ internal sealed class YearlyRewindStore
             {
                 throw new InvalidDataException("The rewind snapshot contains an invalid item.");
             }
+        }
+
+        if (snapshot.Music is { } music)
+        {
+            if (music.Music is not null || music.Items is null || music.PeriodStartUtc != snapshot.PeriodStartUtc
+                || music.SnapshotAtUtc != snapshot.SnapshotAtUtc || music.GeneratedAtUtc != snapshot.GeneratedAtUtc
+                || music.TimeZoneId != snapshot.TimeZoneId || music.Items.Any(item => item is null || item.ItemType != "Audio"))
+            {
+                throw new InvalidDataException("The rewind snapshot contains invalid music data.");
+            }
+
+            Validate(music, userId);
         }
 
         ValidateInsights(snapshot);

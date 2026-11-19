@@ -107,7 +107,7 @@ public sealed class PlaybackReportingImportTests : IDisposable
         Insert(db, duration: "-1");
         Insert(db, duration: "NaN");
         Insert(db, user: Guid.Empty);
-        Insert(db, type: "Audio");
+        Insert(db, type: "Book");
         Insert(db, "2030-01-01 00:00:00");
         var first = Assert.Single(Reader().Read(_cutoff));
         using var update = db.CreateCommand();
@@ -116,6 +116,34 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var second = Assert.Single(Reader().Read(_cutoff));
         Assert.Equal(first.SourceKey, second.SourceKey);
         Assert.Equal(1200, second.ActiveSeconds);
+    }
+
+    [Fact]
+    public void AudioImportRetainsRepeatedPlaysAndAvoidsDuplicatingMusicBaseline()
+    {
+        using var db = Database();
+        Insert(db, "2026-12-01 12:00:00Z", type: "Audio");
+        Insert(db, "2026-12-02 12:00:00Z", type: "Audio");
+        var rows = Reader().Read(_cutoff);
+        Assert.Equal(2, rows.Count);
+        var item = Item() with { ItemType = "Audio", Genres = ["Jazz"] };
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
+        foreach (var entry in rows) Assert.True(history.Import(entry, item, _cutoff));
+        history.Record(item, new UserItemActivity { LastPlayedDate = rows.Max(row => row.StartedAtUtc).UtcDateTime, Played = true, PlayCount = 100 }, _cutoff, _cutoff);
+        var journals = new UserActivityHistoryStore(_directory);
+        journals.Save(_userId, history);
+        var report = Build(journals.Load(_userId));
+        Assert.Empty(report.Items);
+        var music = report.Music!;
+        Assert.Equal(2, music.PlaybackReportingPlayCount);
+        var track = Assert.Single(music.Items);
+        Assert.Equal(2, track.PlayCount);
+        Assert.Equal(1200, track.ActiveSeconds);
+        Assert.Equal(1200, track.EstimatedSeconds);
+        Assert.Equal(1200, music.Months.SelectMany(month => month.Genres!).Sum(genre => genre.ActiveSeconds));
+        var reports = new YearlyRewindStore(_directory);
+        Assert.True(reports.Publish(report));
+        Assert.Equal(2, reports.Load(_userId)!.Music!.PlaybackReportingPlayCount);
     }
 
     [Fact]

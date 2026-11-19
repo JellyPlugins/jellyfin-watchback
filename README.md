@@ -9,6 +9,7 @@ Your personal annual Jellyfin playback rewind.
 ## Features
 
 - Viewing hours, films, episodes, series and active days.
+- Optional music section with listening hours, track and play counts, top 5 tracks by listening time, monthly listening chart and music genre chart with monthly selection.
 - Monthly viewing chart, film/episode and genre pie charts, with monthly genre selection.
 - Viewing times, weekdays, longest active-day streak and comparison with the previous report.
 - Eight languages: English, German, French, Spanish, Portuguese, Chinese, Turkish and Swedish. Both the personal page and administration settings follow the active Jellyfin user’s display language, with English fallback for unsupported languages.
@@ -18,13 +19,13 @@ Activity is recorded whenever the plugin runs, independently of whether the annu
 
 Enable **Yearly Rewind** in the plugin settings and choose its annual display period (default **15 December–15 January**, inclusive). At 00:00 server time on the first day, the preceding annual period is frozen into one report per user. The report is replaced the next year. Hiding the tab after the configured end date keeps the report on disk. Changing the display settings never finalizes or rewrites an existing annual report.
 
-The current collector covers video playback. Music and books are not included.
+The collector covers video and music playback. Music statistics appear only when the report contains qualifying music activity; music and video totals remain separate. Books are not included. Existing frozen reports remain unchanged. After upgrading from a video-only version, measured music coverage begins with the updated collector; available Jellyfin music state can supply conservative baseline estimates from earlier periods.
 
 ## Optional Playback Reporting history
 
 Watchback checks for retained Playback Reporting history once for each available user, when it first starts collecting that user's activity. When Playback Reporting is installed, its existing `playback_reporting.db` supplies the initial historical data. A disabled installation with retained data also works. No additional switch, API key, or Playback Reporting dependency is required for normal Watchback operation.
 
-Historical films and episodes are imported into each user's existing Watchback journal, including repeated plays and recorded durations. The boundary is the start of Watchback's own recording for that user and survives restarts; later Playback Reporting entries are excluded. The imported data and completion marker are saved together. After completion, Watchback records activity itself and never reimports or updates that user's history from Playback Reporting, including after restarts or before annual reports. Matching Jellyfin baseline estimates are suppressed to avoid counting a playback twice. Known media metadata is enriched from the current library; deleted titles can retain their recorded names and durations without inventing missing genres or series information.
+Historical films, episodes and music tracks are imported into each user's existing Watchback journal, including repeated plays and recorded durations. The boundary is the start of Watchback's own recording for that user and survives restarts; later Playback Reporting entries are excluded. The imported data and completion marker are saved together. After completion, Watchback records activity itself and never reimports or updates that user's history from Playback Reporting, including after restarts or before annual reports. Updating from a video-only version does not repeat an already completed import to fetch old music history. Matching Jellyfin baseline estimates are suppressed to avoid counting a playback twice. Known media metadata is enriched from the current library; deleted titles can retain their recorded names and durations without inventing missing genres or series information.
 
 Playback Reporting stores a session start and total duration, not individual pause intervals. Historical time is assigned to the start month, conservatively capped at Watchback's collection boundary and the report cutoff, and displayed as reconstructed activity. It contributes to totals, charts, and play counts; precise viewing patterns, active days, and streaks still use Watchback's measured intervals only. Offset-free timestamps use the server's current time zone, so past server time-zone changes cannot be recovered exactly.
 

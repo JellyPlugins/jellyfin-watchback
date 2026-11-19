@@ -12,6 +12,7 @@ using Jellyfin.Plugin.Watchback.Services.Common;
 using Jellyfin.Plugin.Watchback.Services.ConfigAccess;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
@@ -143,6 +144,12 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         foreach (var user in availableUsers)
         {
             var history = History(user.Id);
+            if (!history.MusicRecordingStartedAtUtc.HasValue)
+            {
+                history.MusicRecordingStartedAtUtc = now;
+                _dirty.Add(user.Id);
+            }
+
             if (!history.PlaybackReportingBeforeUtc.HasValue)
             {
                 history.PlaybackReportingBeforeUtc = history.Coverage.Select(period => (DateTimeOffset?)period.StartUtc).Min() ?? now;
@@ -502,7 +509,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 }
 
                 Tick(now, false, true);
-                if (args.Item is not Video video || _virtualItems.IsVirtual(args.Item) || args.IsAutomated)
+                if (args.Item is not (Video or Audio) || _virtualItems.IsVirtual(args.Item) || args.IsAutomated)
                 {
                     return;
                 }
@@ -533,7 +540,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 var progress = new UserPlaybackTracker.Progress(args.PlaybackPositionTicks, args.IsPaused, args.IsAutomated, start, stop, now);
                 foreach (var user in args.Users.DistinctBy(user => user.Id))
                 {
-                    RecordPlayback(user, video, metadata, session, progress);
+                    RecordPlayback(user, args.Item, metadata, session, progress);
                 }
 
                 if (stop)
@@ -556,7 +563,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         }
     }
 
-    private void RecordPlayback(User user, Video item, UserPlaybackItem metadata, string session, UserPlaybackTracker.Progress progress)
+    private void RecordPlayback(User user, BaseItem item, UserPlaybackItem metadata, string session, UserPlaybackTracker.Progress progress)
     {
         if (user.HasPermission(PermissionKind.IsDisabled) || !item.IsVisible(user) || !TryHistory(user.Id, progress.At, out var history))
         {

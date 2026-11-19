@@ -57,10 +57,10 @@ public class UserActivityInsightsService : IUserActivityInsightsService
             $"Building activity report for {users.Count} users",
             _logger);
 
-        // Query all playable video items once
+        // Query playable video and music items once
         var allItems = _libraryManager.GetItemList(new InternalItemsQuery
         {
-            MediaTypes = [MediaType.Video],
+            MediaTypes = [MediaType.Video, MediaType.Audio],
             IsFolder = false
         });
 
