@@ -7,6 +7,7 @@ on:
     paths:
     - "manifest.json"
     - "Jellyfin.Plugin.Watchback/**"
+    - "media/logo.png"
     - "build.yaml"
     - "Directory.Build.props"
 
@@ -205,6 +206,7 @@ jobs:
           --arg changelog "$BUILD_CHANGELOG" \
           --arg description "$BUILD_DESCRIPTION" \
           --arg overview "$BUILD_OVERVIEW" \
+          --arg imageUrl "$(jq -er '.[0].imageUrl' manifest.json)" \
           --arg targetAbi "$TARGET_ABI" \
           --arg timestamp "$TIMESTAMP" \
           --arg version "$VERSION" \
@@ -216,6 +218,8 @@ jobs:
             "name": "jellyfin-watchback",
             "overview": $overview,
             "owner": "JellyPlugins",
+            "imageUrl": $imageUrl,
+            "imagePath": "logo.png",
             "targetAbi": $targetAbi,
             "timestamp": $timestamp,
             "version": $version,

@@ -1,5 +1,7 @@
 # Jellyfin Watchback
 
+![Jellyfin Watchback Logo](media/logo.png)
+
 A [Jellyfin](https://jellyfin.org/) plugin that provides an annual playback rewind.
 
 > **AI disclosure:** This project is AI-assisted but not vibe-coded. AI is used as a partner for post-change reviews, discussing specific problems, quick analysis, suggestions, and spell checking, never as a substitute for the logic, regression testing, code coverage, and static checks that gate every change. The translations are the main AI-generated content. It was built with a great deal of effort and care, and we deliberately do not trust AI blindly.
