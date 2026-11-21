@@ -183,6 +183,41 @@ public sealed class YearlyRewindStoreTests : IDisposable
         Assert.Equal(current.SnapshotId, store.Load(_userId)!.SnapshotId);
     }
 
+    [Fact]
+    public void CombinedStreakRoundTripsWhenOptionalMusicInsightsAreUnavailable()
+    {
+        var store = new YearlyRewindStore(_directory);
+        var snapshot = Snapshot(2026) with
+        {
+            ActiveDays = 1,
+            ActivityStreak = new YearlyRewindStreak { Days = 1, Start = new DateOnly(2026, 7, 1), End = new DateOnly(2026, 7, 1) },
+            Music = Snapshot(2026) with { ActiveDays = 1, Items = [new YearlyRewindItem { ItemId = Guid.NewGuid(), ItemType = "Audio", Name = "Track", ActiveSeconds = 123, PlayCount = 1 }] }
+        };
+        Assert.True(store.Publish(snapshot));
+        var loaded = store.Load(_userId)!;
+        Assert.Equal(snapshot.ActivityStreak, loaded.ActivityStreak);
+        Assert.Null(loaded.Insights);
+        Assert.Null(loaded.Music!.Insights);
+        Assert.Equal(1, loaded.Music.ActiveDays);
+        Assert.Equal("Audio", Assert.Single(loaded.Music.Items).ItemType);
+    }
+
+    [Fact]
+    public void NullMonthlyGenreIsRejectedWithoutOverwritingThePublishedReport()
+    {
+        var store = new YearlyRewindStore(_directory);
+        var current = Snapshot(2026);
+        Assert.True(store.Publish(current));
+        var invalid = Snapshot(2027) with
+        {
+            FullTimePerGenre = true,
+            Months = [new YearlyRewindMonth { ActiveSeconds = 3600, Genres = [null!, new YearlyRewindGenre { Name = "Drama", ActiveSeconds = 3600 }] }]
+        };
+        Assert.Throws<InvalidDataException>(() => store.Publish(invalid));
+        Assert.Equal(current.SnapshotId, store.Load(_userId)!.SnapshotId);
+        Assert.Single(Directory.GetFiles(_directory, "*.json", SearchOption.AllDirectories));
+    }
+
     [Theory]
     [InlineData("nested")]
     [InlineData("missing-items")]

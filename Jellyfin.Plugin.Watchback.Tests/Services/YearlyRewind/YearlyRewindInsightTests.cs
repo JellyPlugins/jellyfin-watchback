@@ -152,6 +152,49 @@ public sealed class YearlyRewindInsightTests : IDisposable
         Assert.Throws<InvalidDataException>(() => store.Publish(report with { ActivityStreak = report.ActivityStreak with { End = new DateOnly(2026, 7, 1) } }));
     }
 
+    [Theory]
+    [InlineData("Movie", true)]
+    [InlineData("Episode", true)]
+    [InlineData("Audio", true)]
+    [InlineData("AudioBook", false)]
+    [InlineData("MusicVideo", false)]
+    public void CombinedStreakClipsAnnualBoundariesAndIgnoresUnsupportedMedia(string itemType, bool included)
+    {
+        var start = Parse("2026-01-01T00:00:00Z");
+        var cutoff = start.AddYears(1);
+        var history = new UserActivityHistory
+        {
+            Coverage = [new UserActivityCoverage { StartUtc = start, EndUtc = cutoff }],
+            Sessions = [new UserPlaybackSession
+            {
+                Item = _movie with { ItemType = itemType }, QualifiedAtUtc = cutoff.AddDays(-1),
+                Intervals = [
+                    new UserPlaybackInterval(start.AddDays(-2), start.AddDays(-1)),
+                    new UserPlaybackInterval(start.AddMinutes(-15), start.AddMinutes(15)),
+                    new UserPlaybackInterval(start.AddDays(3), start.AddDays(3).AddMinutes(15)),
+                    new UserPlaybackInterval(cutoff.AddMinutes(-15), cutoff.AddMinutes(15)),
+                    new UserPlaybackInterval(cutoff.AddDays(1), cutoff.AddDays(1).AddMinutes(15))]
+            }]
+        };
+        var report = YearlyRewindAggregator.Build(_user, history, start, cutoff, cutoff.AddDays(2), TimeZoneInfo.Utc);
+        var items = report.Items.Concat(report.Music?.Items ?? []);
+        if (included)
+        {
+            Assert.Equal(2700, Assert.Single(items).ActiveSeconds);
+            Assert.Equal(1, report.ActivityStreak!.Days);
+            Assert.Equal(new DateOnly(2026, 1, 1), report.ActivityStreak.Start);
+            Assert.Equal(new DateOnly(2026, 1, 1), report.ActivityStreak.End);
+            Assert.Equal(3, report.ActiveDays + (report.Music?.ActiveDays ?? 0));
+        }
+        else
+        {
+            Assert.Empty(items);
+            Assert.Equal(0, report.ActivityStreak!.Days);
+            Assert.Null(report.ActivityStreak.Start);
+            Assert.Null(report.ActivityStreak.End);
+        }
+    }
+
     [Fact]
     public void ReconstructedActivityDoesNotInventCombinedStreakDates()
     {
