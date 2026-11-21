@@ -1,66 +1,105 @@
-# jellyfin-watchback
+# Jellyfin Watchback
 
-[![Build and tests](https://github.com/JellyPlugins/jellyfin-watchback/actions/workflows/pr.yml/badge.svg)](https://github.com/JellyPlugins/jellyfin-watchback/actions/workflows/pr.yml)
-[![E2E](https://img.shields.io/badge/e2e%20tests-10-blue)](test/e2e/COVERAGE.md)
-[![Jellyfin](https://img.shields.io/badge/Jellyfin-12.4-blueviolet)](https://jellyfin.org/)
+A [Jellyfin](https://jellyfin.org/) plugin that provides an annual playback rewind.
 
-Your personal annual Jellyfin playback rewind.
+> **AI disclosure:** This project is AI-assisted but not vibe-coded. AI is used as a partner for post-change reviews, discussing specific problems, quick analysis, suggestions, and spell checking, never as a substitute for the logic, regression testing, code coverage, and static checks that gate every change. The translations are the main AI-generated content. It was built with a great deal of effort and care, and we deliberately do not trust AI blindly.
+>
+
+<table>
+<tr>
+<td style="vertical-align: top; text-align: center;">
+
+**Project**
+
+[![Live Demo](https://img.shields.io/badge/demo-live%20preview-ff69b4?style=flat-square&logo=githubpages&logoColor=white&labelColor=2d333b)](https://jellyplugins.github.io/jellyfin-watchback/)<br>
+[![Languages](https://img.shields.io/badge/i18n-8%20languages-1f8feb?style=flat-square&logo=googletranslate&logoColor=white&labelColor=2d333b)](Jellyfin.Plugin.Watchback/i18n/)<br>
+[![GitHub Release](https://img.shields.io/github/v/release/JellyPlugins/jellyfin-watchback?style=flat-square&logo=github&logoColor=white&labelColor=2d333b)](https://github.com/JellyPlugins/jellyfin-watchback/releases)
+
+</td>
+<td style="vertical-align: top; text-align: center;">
+
+**Quality**
+
+[![Quality gate](https://img.shields.io/sonar/quality_gate/JellyPlugins_jellyfin-watchback?server=https%3A%2F%2Fsonarcloud.io&style=flat-square&logo=sonarcloud&logoColor=white&labelColor=2d333b)](https://sonarcloud.io/summary/new_code?id=JellyPlugins_jellyfin-watchback)<br>
+[![C# coverage](https://img.shields.io/codecov/c/github/JellyPlugins/jellyfin-watchback?style=flat-square&logo=codecov&logoColor=white&labelColor=2d333b&label=C%23%20coverage&flag=backend)](https://codecov.io/gh/JellyPlugins/jellyfin-watchback)<br>
+[![UI coverage](https://img.shields.io/codecov/c/github/JellyPlugins/jellyfin-watchback?flag=frontend&style=flat-square&logo=vitest&logoColor=white&labelColor=2d333b&label=UI%20coverage)](https://app.codecov.io/gh/JellyPlugins/jellyfin-watchback/flags)<br>
+[![E2E](https://img.shields.io/badge/e2e%20tests-60-2ea043?style=flat-square&logo=docker&logoColor=white&labelColor=2d333b)](test/e2e/)
+
+</td>
+<td style="vertical-align: top; text-align: center;">
+
+**Stack**
+
+[![Jellyfin](https://img.shields.io/badge/Jellyfin-12.4+-00A4DC?style=flat-square&logo=jellyfin&logoColor=white&labelColor=2d333b)](https://jellyfin.org/)<br>
+[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet&logoColor=white&labelColor=2d333b)](https://dotnet.microsoft.com/)<br>
+[![License](https://img.shields.io/github/license/JellyPlugins/jellyfin-watchback?style=flat-square&logo=gnu&logoColor=white&labelColor=2d333b)](LICENSE)
+
+</td>
+</tr>
+</table>
+
+## Live Demo
+
+**[Try the interactive demo →](https://jellyplugins.github.io/jellyfin-watchback/)**
+
+Explore the per-user annual playback report with sample data.
+No Jellyfin server required.
+
+---
 
 ## Features
 
 - Viewing hours, films, episodes, series and active days.
-- Optional music section with listening hours, track and play counts, top 5 tracks by listening time, monthly listening chart and music genre chart with monthly selection.
+- Listening hours, track and play counts, top 5 tracks by listening time, monthly listening chart and music genre chart with monthly selection.
 - Monthly viewing and listening charts, a film/series/music mix, and genre charts with monthly selection.
 - Viewing times, weekdays, combined film/series/music active-day streak with separate video and music streaks, and comparison with the previous report.
 - Eight languages: English, German, French, Spanish, Portuguese, Chinese, Turkish and Swedish. Both the personal page and administration settings follow the active Jellyfin user’s display language, with English fallback for unsupported languages.
-- Authenticated personal reports and administrator-only settings.
 
-Activity is recorded whenever the plugin runs, independently of whether the annual page is enabled. The page is **disabled by default**. Available Jellyfin state can reconstruct a known playback per title; old session history, exact viewing times and repeated plays cannot be recovered from lifetime totals. Estimates remain visibly separate from measured playback.
+Activity is recorded whenever the plugin runs, independently of whether the annual page is enabled. The page is **disabled by default**. Available Jellyfin state can reconstruct a known playback per title; old session history, exact viewing times and repeated plays cannot be recovered from lifetime totals. Estimates remain visibly separate from measured playback. Initially Watchback checks for the [Playback Reporting](https://github.com/jellyfin/jellyfin-plugin-playbackreporting) plugin to create the initial history as accurately as possible.
 
 Enable **Yearly Rewind** in the plugin settings and choose its annual display period (default **15 December–15 January**, inclusive). At 00:00 server time on the first day, the preceding annual period is frozen into one report per user. The report is replaced the next year. Hiding the tab after the configured end date keeps the report on disk. Changing the display settings never finalizes or rewrites an existing annual report.
 
-Genre charts count the full playback time for every genre assigned to a title. Their percentages use the sum of genre times, which can exceed actual playback time; the information button beside each genre heading explains this. Monthly genre selection is available in reports produced with this counting method. Older frozen reports retain their stored data and show the full-time annual genre chart from item metadata.
+Genre charts count the full playback time for every genre assigned to a title. Their percentages use the sum of genre times, which can exceed actual playback time.
 
-The collector covers video and music playback. Music statistics appear only when the report contains qualifying music activity; music and video totals remain separate. Books are not included. Existing frozen reports remain unchanged. After upgrading from a video-only version, measured music coverage begins with the updated collector; available Jellyfin music state can supply conservative baseline estimates from earlier periods.
+The collector covers video and music playback. Music statistics appear only when the report contains qualifying music activity.
 
-## Optional Playback Reporting history
+## Installation
 
-Watchback checks for retained Playback Reporting history once per media category for each available user, when it first starts collecting that user's video or music activity. When Playback Reporting is installed, its existing `playback_reporting.db` supplies the initial historical data. A disabled installation with retained data also works. No additional switch, API key, or Playback Reporting dependency is required for normal Watchback operation.
+### From Repository (Recommended)
 
-Historical films, episodes and music tracks are imported into each user's existing Watchback journal, including repeated plays and recorded durations. Each media category uses the start of Watchback's own recording for that user as its permanent import boundary; later Playback Reporting entries are excluded. Music uses its own recording start, even when video recording began earlier. Imported data and the separate video and music completion markers are saved together. A completed category is never reimported or updated from Playback Reporting. Updating from a video-only version performs one initial music import up to the music recording boundary, while preserving the completed video import and all frozen reports. Matching Jellyfin baseline estimates are suppressed to avoid counting a playback twice. Known media metadata is enriched from the current library; deleted titles can retain their recorded names and durations without inventing missing genres or series information.
+1. In Jellyfin, go to **Dashboard** → **Plugins** → **Repositories**
+2. Add this repository URL:
+   ```
+   https://raw.githubusercontent.com/JellyPlugins/jellyfin-watchback/main/manifest.json
+   ```
+3. Go to **Catalog** and install **Jellyfin Watchback**
+4. Restart Jellyfin
 
-Playback Reporting stores a session start and total duration, not individual pause intervals. Historical time is assigned to the start month, conservatively capped at Watchback's collection boundary and the report cutoff, and displayed as reconstructed activity. It contributes to totals, charts, and play counts; precise viewing patterns, active days, and streaks still use Watchback's measured intervals only. Offset-free timestamps use the server's current time zone, so past server time-zone changes cannot be recovered exactly.
+### Manual Installation
 
-The source database is opened read-only. Invalid rows and unknown or disabled users are ignored. Failed initial imports or journal saves are retried after one minute without stopping Watchback's collector; relevant new reports wait for the initial import to complete, while existing reports remain available and unchanged. A confirmed missing plugin or database completes the initial check with no imported rows; installing Playback Reporting afterward does not trigger another import for categories whose checks are already complete. Newly available users receive their own initial check. Existing journals without a completion marker receive one final initial import using their original recording boundary. Only history still retained by Playback Reporting can be imported, and importing later never rewrites a frozen annual report.
+1. Download the latest release package from [Releases](https://github.com/JellyPlugins/jellyfin-watchback/releases)
+2. Extract the package and copy all files into your Jellyfin plugin directory (e.g. `/config/plugins/JellyfinWatchback/`)
+3. Restart Jellyfin
 
+---
 
-## Installation and demo
+## Quick Start
 
-This repository starts with an unreleased `1.0.0.0` development version. Build from source until the first release is published. Release automation fills the catalog download URL, timestamp and checksum; the development manifest is not yet an installable catalog entry.
+1. Open **Jellyfin Watchback** from the sidebar.
+2. Enable Yearly Rewind, choose the annual display period, and save.
+3. Wait for the configured time to come and visit the report page.
 
-```sh
-dotnet publish Jellyfin.Plugin.Watchback -c Release -o publish
-```
+---
 
-Copy the publish output into its own folder under Jellyfin's `plugins` directory and restart Jellyfin. Open **Dashboard → Plugins → jellyfin-watchback** to configure it. The plugin injects its own lightweight web client script without editing Jellyfin's web files. The personal tab appears during the configured period.
+## Documentation
 
-The [GitHub Pages demo](https://jellyplugins.github.io/jellyfin-watchback/) is deployed by the Pages workflow once this repository has been pushed and Pages has been enabled. Its sample data deliberately shows the 2026 rewind throughout the year. The demo follows the browser's preferred supported language and falls back to English. Use `?lang=en` (or another supported language code) to override it.
+| Resource                                                     | Description                                                               |
+|--------------------------------------------------------------|---------------------------------------------------------------------------|
+| [CONTRIBUTING.md](CONTRIBUTING.md)                           | Project structure, builds, testing, releases and GitHub repository setup. |
+| [CHANGELOG.md](CHANGELOG.md)                                 | Detailed version history                                                  |
+| [Live Demo](https://jellyplugins.github.io/jellyfin-watchback/) | Interactive dashboard demo                                                |
 
-## Data storage
-
-Watchback owns `<Jellyfin DataPath>/jellyfin-watchback/`:
-
-```text
-activity-history/<user-id>.json       Measured playback, observed state and imported history
-yearly-rewind/reports/<user-id>.json  One frozen report per user
-yearly-rewind/pending/<user-id>.json  Crash-safe pending annual publication
-jellyfin-watchback-useractivity-latest.json  Latest Jellyfin baseline
-```
-
-Settings use Jellyfin's normal per-plugin XML configuration. Deleting a Jellyfin user removes that user's Watchback journal and reports.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for builds and tests, [implementation-plan.md](docs/implementation-plan.md) for the implementation checklist, and [repository-setup.md](docs/repository-setup.md) for GitHub repository setup.
 
 ## License
 
-[GPL-3.0](LICENSE).
+GNU General Public License v3.0. See [LICENSE](LICENSE).
