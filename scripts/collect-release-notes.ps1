@@ -212,12 +212,10 @@ function Invoke-GitHubApi([string] $path, [string] $tok) {
         $r = if ($exn.PSObject.Properties['Response']) { $exn.Response } else { $null }
         if ($r) {
             $status = [int]$r.StatusCode
-            if ($status -eq 403) {
-                $remaining = Get-HeaderValue $r.Headers 'X-RateLimit-Remaining'
-                if ($remaining -eq '0') {
-                    $reset = Get-HeaderValue $r.Headers 'X-RateLimit-Reset'
-                    throw "GitHub API rate limit exceeded. Resets at Unix time $reset. Set `$env:GITHUB_TOKEN to lift the limit to 5000/h."
-                }
+            $rateLimited = $status -eq 403 -and (Get-HeaderValue $r.Headers 'X-RateLimit-Remaining') -eq '0'
+            if ($rateLimited) {
+                $reset = Get-HeaderValue $r.Headers 'X-RateLimit-Reset'
+                throw "GitHub API rate limit exceeded. Resets at Unix time $reset. Set `$env:GITHUB_TOKEN to lift the limit to 5000/h."
             }
             if ($status -eq 404) {
                 return $null  # Not a real PR number (might be an issue/discussion)

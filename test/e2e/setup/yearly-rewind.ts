@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
-import { join } from 'node:path';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export function rewindDataDir(): string {

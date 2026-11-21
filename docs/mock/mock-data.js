@@ -50,7 +50,7 @@ var MOCK_YEARLY_REWIND=(function(){
         GeneratedAtUtc:'2026-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Partial',FullTimePerGenre:true,ActivityStreak:{Days:13,Start:'2026-11-02',End:'2026-11-14'},Items:items,Months:months,ActiveDays:68,ReconstructedItemCount:1,
         Music:{SchemaVersion:1,SnapshotId:'demo-music-2026',UserId:'demo-user',PeriodStartUtc:'2025-12-15T00:00:00Z',SnapshotAtUtc:'2026-12-15T00:00:00Z',
             GeneratedAtUtc:'2026-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Ready',FullTimePerGenre:true,Items:musicItems,Months:musicMonths,ActiveDays:150,ReconstructedItemCount:0,
-            Insights:{HourlySeconds:Array(24).fill(musicItems.reduce(function(sum,item){return sum+item.ActiveSeconds;},0)/24),WeekdaySeconds:Array(7).fill(musicItems.reduce(function(sum,item){return sum+item.ActiveSeconds;},0)/7),LongestStreakDays:10,LongestStreakStart:'2026-11-05',LongestStreakEnd:'2026-11-14'},
+            Insights:{HourlySeconds:new Array(24).fill(musicItems.reduce(function(sum,item){return sum+item.ActiveSeconds;},0)/24),WeekdaySeconds:new Array(7).fill(musicItems.reduce(function(sum,item){return sum+item.ActiveSeconds;},0)/7),LongestStreakDays:10,LongestStreakStart:'2026-11-05',LongestStreakEnd:'2026-11-14'},
             Comparison:{PeriodStartUtc:'2024-12-15T00:00:00Z',SnapshotAtUtc:'2025-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Ready',
                 ActiveSeconds:22*3600,EstimatedSeconds:0,ReconstructedItemCount:0,TrackCount:6,PlayCount:320,ActiveDays:124,Genres:['Electronic','Rock','Jazz'],TopGenre:'Electronic'}},
         Insights:{HourlySeconds:distribute([0,0,0,0,0,0,0,1,2,2,1,1,2,1,1,1,2,4,8,12,16,14,8,3]),
@@ -60,11 +60,12 @@ var MOCK_YEARLY_REWIND=(function(){
 })();
 
 var demoLanguage = (function () {
-  var supported = ['en', 'de', 'fr', 'es', 'pt', 'zh', 'tr', 'sv'];
+  var supported = new Set(['en', 'de', 'fr', 'es', 'pt', 'zh', 'tr', 'sv']);
   var requested = new URLSearchParams(location.search).get('lang');
-  var candidates = requested ? [requested] : (navigator.languages?.length ? navigator.languages : [navigator.language]);
+  var candidates = navigator.languages?.length ? navigator.languages : [navigator.language];
+  if (requested) candidates = [requested];
   return candidates.map(function (language) { return (language || '').toLowerCase().split(/[-_]/)[0]; })
-    .find(function (language) { return supported.includes(language); }) || 'en';
+    .find(function (language) { return supported.has(language); }) || 'en';
 })();
 document.documentElement.lang = demoLanguage;
 window.ApiClient = {
@@ -75,7 +76,8 @@ window.ApiClient = {
   ajax: function (options) {
     if (options.url.includes('Translations')) {
       var language = new URL(options.url, location.href).searchParams.get('lang') || demoLanguage;
-      return fetch('i18n/' + language + '.json').then(function (response) { if (!response.ok) throw new Error('Unsupported demo language'); return response.json(); });
+      return fetch('i18n/' + language + '.json').then(function (response) { if (!response.ok) throw new Error('Unsupported demo language');
+        return response.json(); });
     }
     if (options.url.includes('/Status')) return Promise.resolve({Enabled:true,TabVisible:true,Available:true,SnapshotId:MOCK_YEARLY_REWIND.SnapshotId,SnapshotAtUtc:MOCK_YEARLY_REWIND.SnapshotAtUtc,TimeZoneId:'UTC'});
     return Promise.resolve(structuredClone(MOCK_YEARLY_REWIND));
