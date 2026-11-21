@@ -144,6 +144,12 @@
         <EmbeddedResource Include="js\yearly-rewind.js">
             <LogicalName>Jellyfin.Plugin.Watchback.js.yearly-rewind.js</LogicalName>
         </EmbeddedResource>
+        <EmbeddedResource Include="..\media\logo.png">
+            <LogicalName>Jellyfin.Plugin.Watchback.logo.png</LogicalName>
+            <Link>logo.png</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        </EmbeddedResource>
         <!-- Source module files are NOT embedded but kept for development -->
         <None Include="PluginPages\configPage.template.html"/>
         <None Include="PluginPages\css\*.css"/>
