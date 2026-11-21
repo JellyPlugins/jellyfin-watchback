@@ -15,7 +15,7 @@ let extra: Record<string, any> = {};
 const snapshotAt = () => id === 'snapshot-b' ? '2027-12-15T00:00:00Z' : '2026-12-15T00:00:00Z';
 const periodStart = () => id === 'snapshot-b' ? '2026-12-15T00:00:00Z' : '2025-12-15T00:00:00Z';
 const report = () => ({ SnapshotId: id, PeriodStartUtc: periodStart(), SnapshotAtUtc: snapshotAt(), TimeZoneId: 'UTC',
- DataState: 'Ready', ActiveDays: 2, FirstItemId: '12345678123412341234123456781234',
+ FullTimePerGenre: true, DataState: 'Ready', ActiveDays: 2, FirstItemId: '12345678123412341234123456781234',
  Items: [{ ItemId: '12345678123412341234123456781234', Name: '<script>bad</script>', ItemType: 'Movie', ActiveSeconds: 3600, Genres: ['Drama'] },
  {ItemId: 'episode', Name: 'Episode', ItemType: 'Episode', SeriesId: 'series', SeriesName: 'Series', ActiveSeconds: 600, Genres: [] }],
  Months: [{ StartUtc: periodStart(), EndUtc: id === 'snapshot-b' ? '2027-01-15T00:00:00Z' : '2026-01-15T00:00:00Z', ActiveSeconds: 4200 }], ...extra });
@@ -190,15 +190,15 @@ test('single-category and empty pies remain finite and safe for hostile genre la
  expect(root.textContent).not.toContain('NaN');
 });
 
-test('genre pie splits duplicate tags once and groups the long tail without losing time', async () => {
+test('genre pie counts full time for every distinct tag and groups the long tail without losing time', async () => {
  extra.Items = Array.from({length: 9}, (_, index) => ({ItemId: 'deleted-' + index, ItemType: 'Movie', Name: 'Movie ' + index, ActiveSeconds: 3600,
   Genres: ['Genre ' + index, 'Genre ' + index, ' Shared ']}));
  loadYearlyRewindBundle(); await flush();
  const genres = root.querySelector('.jfw-rewind-genres')!;
  expect(genres.textContent).toContain('Distinct genres: 10');
  expect(genres.querySelectorAll('.jfw-rewind-pie-legend li')).toHaveLength(6);
- expect(genres.querySelector('svg')?.getAttribute('aria-label')).toContain('Shared: 50% · 4.5 h');
- expect(genres.querySelector('svg')?.getAttribute('aria-label')).toContain('Other genres: 27.8% · 2.5 h');
+ expect(genres.querySelector('svg')?.getAttribute('aria-label')).toContain('Shared: 50% · 9 h');
+ expect(genres.querySelector('svg')?.getAttribute('aria-label')).toContain('Other genres: 27.8% · 5 h');
  expect(root.querySelector('.jfw-rewind-mix svg')?.getAttribute('aria-label')).toContain('Films: 100% · 9 h');
 });
 
@@ -299,4 +299,187 @@ test('mixed plays of one title retain both source notices', async () => {
  loadYearlyRewindBundle(); await flush();
  expect(root.textContent).toContain('Historical plays imported from Playback Reporting: 1.');
  expect(root.textContent).toContain('Includes 1 titles reconstructed from Jellyfin data.');
+});
+
+const musicReport = (overrides: Record<string, any> = {}) => ({
+ FullTimePerGenre: true, DataState: 'Partial', TimeZoneId: 'UTC', ReconstructedItemCount: 1, PlaybackReportingPlayCount: 2,
+ Items: Array.from({ length: 7 }, (_, index) => ({ ItemId: 'track-' + index, Name: index === 6 ? '<img src=x onerror=bad()>' : 'Track ' + index,
+  ItemType: 'Audio', ActiveSeconds: (index + 1) * 600, PlayCount: index + 1, Genres: index === 0 ? [] : ['Jazz', 'Rock'], HasReconstructedActivity: index === 6 })),
+ Months: [{ StartUtc: '2026-01-01T00:00:00Z', ActiveSeconds: 16800, EstimatedSeconds: 600, Genres: [{ Name: 'Jazz', ActiveSeconds: 16800 }] },
+ { StartUtc: '2026-02-01T00:00:00Z', ActiveSeconds: 0, EstimatedSeconds: 0, Genres: [] }], ...overrides
+});
+
+test.each([undefined, {Items: []}])('music content is absent from old or empty reports (%j)', async music => {
+ extra = music === undefined ? {} : {Music: music};
+ loadYearlyRewindBundle(); await flush();
+ for (const selector of ['.jfw-rewind-top-tracks', '.jfw-rewind-music-genres', '.jfw-rewind-music-months', '.jfw-rewind-stats-music']) {
+  expect(root.querySelector(selector)).toBeNull();
+ }
+ expect(root.querySelectorAll('.jfw-rewind-stat')).toHaveLength(5);
+});
+
+test('music ranks five tracks by listening time and renders safe independent totals and charts', async () => {
+ extra = { Music: musicReport() }; loadYearlyRewindBundle(); await flush();
+ const music = root;
+ expect(music.querySelectorAll('.jfw-rewind-stat')).toHaveLength(8);
+ expect(root.querySelectorAll('.jfw-rewind-stats')).toHaveLength(1);
+ expect(root.querySelector('.jfw-rewind-music')).toBeNull();
+ expect(root.querySelector('.jfw-rewind-top-tracks')?.parentElement).toBe(root.querySelector('.jfw-rewind-genres')?.parentElement);
+ expect(root.querySelector('.jfw-rewind-music-months')?.parentElement).toBe(root.querySelector('.jfw-rewind-months')?.parentElement);
+ expect(music.textContent).toContain('≈ 4.7');
+ expect(music.textContent).toContain('Hours listened');
+ expect(music.textContent).toContain('Historical plays imported from Playback Reporting: 2.');
+ expect(music.textContent).toContain('reconstructed music activity');
+ const titles = music.querySelectorAll('.jfw-rewind-top-tracks ol li'); expect(titles).toHaveLength(5);
+ expect(titles[0].textContent).toContain('<img src=x onerror=bad()>');
+ expect(titles[1].textContent).toContain('Track 5');
+ expect(music.querySelector('img')).toBeNull();
+ expect(music.querySelector('.jfw-rewind-music-genres svg.jfw-rewind-pie')?.getAttribute('aria-label')).toContain('Your music genres');
+ expect(music.querySelector('.jfw-rewind-music-months [role="listitem"]')?.getAttribute('aria-label')).toContain('January 2026: 4.7 h (0.2 h estimated)');
+ expect(root.querySelectorAll('.jfw-rewind-stat')[5].textContent).toContain('4.7');
+ // The original video stats remain 1.2 hours despite music activity.
+ expect(root.querySelector(':scope > .jfw-rewind-stats')?.textContent).toContain('1.2');
+ const select = music.querySelector('.jfw-rewind-music-genres select')!;
+ expect(select.id).not.toBe(root.querySelector('.jfw-rewind-genres select')?.id);
+ select.value = '0'; select.dispatchEvent(new Event('change'));
+ expect(music.querySelector('.jfw-rewind-music-genres svg.jfw-rewind-pie')?.getAttribute('aria-label')).toContain('Jazz: 100%');
+ select.value = '1'; select.dispatchEvent(new Event('change'));
+ expect(music.querySelector('.jfw-rewind-music-genres .jfw-rewind-pie-body svg')).toBeNull();
+ select.value = 'all'; select.dispatchEvent(new Event('change'));
+ expect(music.querySelector('.jfw-rewind-music-genres svg.jfw-rewind-pie')?.getAttribute('aria-label')).toContain('Rock');
+});
+
+test('music remains visible when no video was collected', async () => {
+ extra = { DataState: 'NotCollected', Items: [], Music: musicReport({ DataState: 'Ready', PlaybackReportingPlayCount: 0 }) };
+ loadYearlyRewindBundle(); await flush();
+ expect(root.querySelectorAll('.jfw-rewind-top-tracks li')).toHaveLength(5);
+ expect(root.querySelectorAll(':scope > .jfw-rewind-stats')).toHaveLength(1);
+ expect(root.querySelectorAll('.jfw-rewind-stat')).toHaveLength(8);
+});
+
+test('music without known durations uses unavailable labels and omits charts', async () => {
+ extra = { Music: musicReport({ Items: [{ Name: 'Unknown duration', HasReconstructedActivity: true, ActiveSeconds: 0, PlayCount: 1 }] }) };
+ loadYearlyRewindBundle(); await flush();
+ const music = root;
+ expect(music.textContent).toContain('No listening duration');
+ expect(music.querySelectorAll('.jfw-rewind-stat')[5].textContent).toContain('—');
+ expect(music.querySelector('ol')?.textContent).toContain('—');
+ expect(music.querySelector('.jfw-rewind-music-genres svg.jfw-rewind-pie')).toBeNull();
+});
+
+test('measured music with tied durations and no months renders without estimates', async () => {
+ extra = { music: { dataState: 'Ready', items: [
+  { name: 'B', itemId: 'b', activeSeconds: 600 },
+  { name: 'A', itemId: 'b', activeSeconds: 600 },
+  { name: 'A', itemId: 'a', activeSeconds: 600 },
+ ], months: [] } };
+ loadYearlyRewindBundle(); await flush();
+ const music = root;
+ expect(music.querySelector('ol li')?.textContent).toContain('A');
+ expect(music.textContent).not.toContain('≈');
+ expect(music.querySelector('.jfw-rewind-top-tracks')?.textContent).not.toContain('reconstructed');
+ expect(music.querySelector('.jfw-rewind-music-months')).toBeNull();
+ expect(music.querySelector('.jfw-rewind-music-genres svg.jfw-rewind-pie')?.getAttribute('aria-label')).toContain('Unknown genre');
+});
+
+
+test('music comparison includes listening hours, tracks and plays with actual previous values', async () => {
+ extra = { Comparison: { PeriodStartUtc: '2024-12-15T00:00:00Z', SnapshotAtUtc: '2025-12-15T00:00:00Z', TimeZoneId: 'UTC', ActiveSeconds: 3600 },
+  Music: musicReport({ Comparison: { DataState: 'Ready', ActiveSeconds: 7200, TrackCount: 4, PlayCount: 10 } }) };
+ loadYearlyRewindBundle(); await flush();
+ const rows = root.querySelectorAll('.jfw-rewind-comparison-table tbody tr');
+ expect(rows).toHaveLength(8);
+ expect(Array.from(rows[5].querySelectorAll('td'), cell => cell.textContent)).toEqual(['4.7', '2', '+2.7 (+133.3%)']);
+ expect(Array.from(rows[6].querySelectorAll('td'), cell => cell.textContent)).toEqual(['7', '4', '+3 (+75%)']);
+ expect(Array.from(rows[7].querySelectorAll('td'), cell => cell.textContent)).toEqual(['28', '10', '+18 (+180%)']);
+});
+
+test.each([undefined, {ActiveSeconds: 3600}])('missing historical music counts stay unavailable (%j)', async previous => {
+ extra = { Comparison: { PeriodStartUtc: '2024-12-15T00:00:00Z', SnapshotAtUtc: '2025-12-15T00:00:00Z', TimeZoneId: 'UTC' },
+  Music: musicReport({ Comparison: previous }) };
+ loadYearlyRewindBundle(); await flush();
+ const rows = root.querySelectorAll('.jfw-rewind-comparison-table tbody tr');
+ expect(rows[6].textContent).toContain('Tracks7——');
+ expect(rows[7].textContent).toContain('Music plays28——');
+});
+
+
+test('retained music comparisons render without a video comparison', async () => {
+ extra = { DataState: 'NotCollected', Items: [], Comparison: null, Music: musicReport({ Comparison: {
+  PeriodStartUtc: '2024-12-15T00:00:00Z', SnapshotAtUtc: '2025-12-15T00:00:00Z', TimeZoneId: 'UTC',
+  DataState: 'Partial', ActiveSeconds: 7200, TrackCount: 4, PlayCount: 10
+ } }) };
+ loadYearlyRewindBundle(); await flush();
+ const rows = root.querySelectorAll('.jfw-rewind-comparison-table tbody tr');
+ expect(rows).toHaveLength(8);
+ for (const row of Array.from(rows).slice(0, 5)) {
+  expect(Array.from(row.querySelectorAll('td'), cell => cell.textContent)).toEqual(['—', '—', '—']);
+ }
+ expect(Array.from(rows[5].querySelectorAll('td'), cell => cell.textContent)).toEqual(['4.7', '2', '+2.7 (+133.3%)']);
+ expect(Array.from(rows[6].querySelectorAll('td'), cell => cell.textContent)).toEqual(['7', '4', '+3 (+75%)']);
+ expect(Array.from(rows[7].querySelectorAll('td'), cell => cell.textContent)).toEqual(['28', '10', '+18 (+180%)']);
+ expect(root.querySelector('.jfw-rewind-comparison')?.textContent).toContain('12/15/2024 – 12/14/2025');
+ expect(root.querySelector('.jfw-rewind-comparison')?.textContent).not.toContain('No report for the preceding period');
+ expect(root.querySelector('.jfw-rewind-comparison')?.textContent).not.toContain('Previous top genre');
+});
+
+
+test('genre information toggles independently above inline diversity controls', async () => {
+ extra = { Music: musicReport(), Months: [{StartUtc: periodStart(), ActiveSeconds: 4200, Genres: [{Name: 'Drama', ActiveSeconds: 4200}]}] };
+ loadYearlyRewindBundle(); await flush();
+ for (const selector of ['.jfw-rewind-genres', '.jfw-rewind-music-genres']) {
+  const chart = root.querySelector(selector)!;
+  const button = chart.querySelector<HTMLButtonElement>('h3 button')!;
+  const info = chart.querySelector<HTMLElement>('.jfw-rewind-genre-info')!;
+  const controls = chart.querySelector('.jfw-rewind-genre-controls')!;
+  expect(button.getAttribute('aria-controls')).toBe(info.id);
+  expect(button.getAttribute('aria-expanded')).toBe('false');
+  expect(info.hidden).toBe(true);
+  button.click();
+  expect(info.hidden).toBe(false);
+  expect(button.getAttribute('aria-expanded')).toBe('true');
+  expect(info.textContent).toContain('full playback time');
+  expect(info.nextElementSibling).toBe(controls);
+  expect(controls.querySelector('select')).not.toBeNull();
+  expect(chart.querySelector('label')).toBeNull();
+  button.click(); expect(info.hidden).toBe(true);
+ }
+ expect(root.textContent).not.toContain('divided equally');
+});
+
+test('legacy annual genres use full item time without offering divided monthly weights', async () => {
+ extra = { FullTimePerGenre: false, Items: [{ ItemType: 'Movie', ActiveSeconds: 7200, Genres: ['Drama', 'Adventure'] }],
+  Months: [{StartUtc: periodStart(), Genres: [{Name: 'Drama', ActiveSeconds: 3600}, {Name: 'Adventure', ActiveSeconds: 3600}]}] };
+ loadYearlyRewindBundle(); await flush();
+ const chart = root.querySelector('.jfw-rewind-genres')!;
+ expect(chart.querySelector('select')).toBeNull();
+ expect(chart.querySelector('svg')?.getAttribute('aria-label')).toContain('Drama: 50% · 2 h');
+ expect(chart.querySelector('svg')?.getAttribute('aria-label')).toContain('Adventure: 50% · 2 h');
+});
+
+test('media mix includes music and summary places series before episodes', async () => {
+ extra = { Music: musicReport({Items: [{ItemType: 'Audio', Name: 'Track', ActiveSeconds: 4200, PlayCount: 1}]}) };
+ loadYearlyRewindBundle(); await flush();
+ expect(root.querySelector('.jfw-rewind-mix h3')?.textContent).toBe('Your media mix');
+ expect(root.querySelector('.jfw-rewind-mix svg')?.getAttribute('aria-label')).toContain('Music: 50% · 1.2 h');
+ expect(Array.from(root.querySelectorAll('.jfw-rewind-stat h3 span'), cell => cell.textContent).slice(0, 4)).toEqual(['Hours watched', 'Films', 'Series', 'Episodes']);
+});
+
+test('combined streak includes music and exposes separate video and music counts', async () => {
+ extra = { Insights: insights(), ActivityStreak: {Days: 5, Start: '2026-06-01', End: '2026-06-05'},
+  Music: musicReport({ReconstructedItemCount: 0, Insights: {...insights(), LongestStreakDays: 3}}) };
+ loadYearlyRewindBundle(); await flush();
+ expect(root.querySelector('.jfw-rewind-streak-length')?.textContent).toBe('5 days');
+ expect(root.querySelector('.jfw-rewind-streak')?.textContent).toContain('06/01/2026 – 06/05/2026');
+ expect(root.querySelector('.jfw-rewind-streak-video strong')?.textContent).toBe('2');
+ expect(root.querySelector('.jfw-rewind-streak-music strong')?.textContent).toBe('3');
+});
+
+test('music-only measured streak renders even when video insights are unavailable', async () => {
+ extra = { Items: [], Insights: null, ActivityStreak: {Days: 3, Start: '2026-06-01', End: '2026-06-03'},
+  Music: musicReport({ReconstructedItemCount: 0, Insights: {...insights(), LongestStreakDays: 3}}) };
+ loadYearlyRewindBundle(); await flush();
+ expect(root.querySelector('.jfw-rewind-streak-length')?.textContent).toBe('3 days');
+ expect(root.querySelector('.jfw-rewind-streak-video strong')?.textContent).toBe('—');
+ expect(root.querySelector('.jfw-rewind-streak-music strong')?.textContent).toBe('3');
 });

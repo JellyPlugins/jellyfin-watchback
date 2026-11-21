@@ -139,6 +139,7 @@ The documentation drift guard checks that each production and test source file i
 - `Services/YearlyRewind/YearlyRewindService.cs`
 - `Services/YearlyRewind/YearlyRewindSnapshot.cs`
 - `Services/YearlyRewind/YearlyRewindStore.cs`
+- `Services/YearlyRewind/YearlyRewindStreak.cs`
 - `Services/YearlyRewind/YearlyRewindWindow.cs`
 - `js/client-lifecycle.js`
 - `js/native-tabs.js`

@@ -107,7 +107,7 @@ public sealed class PlaybackReportingImportTests : IDisposable
         Insert(db, duration: "-1");
         Insert(db, duration: "NaN");
         Insert(db, user: Guid.Empty);
-        Insert(db, type: "Audio");
+        Insert(db, type: "Book");
         Insert(db, "2030-01-01 00:00:00");
         var first = Assert.Single(Reader().Read(_cutoff));
         using var update = db.CreateCommand();
@@ -116,6 +116,34 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var second = Assert.Single(Reader().Read(_cutoff));
         Assert.Equal(first.SourceKey, second.SourceKey);
         Assert.Equal(1200, second.ActiveSeconds);
+    }
+
+    [Fact]
+    public void AudioImportRetainsRepeatedPlaysAndAvoidsDuplicatingMusicBaseline()
+    {
+        using var db = Database();
+        Insert(db, "2026-12-01 12:00:00Z", type: "Audio");
+        Insert(db, "2026-12-02 12:00:00Z", type: "Audio");
+        var rows = Reader().Read(_cutoff);
+        Assert.Equal(2, rows.Count);
+        var item = Item() with { ItemType = "Audio", Genres = ["Jazz", "Blues"] };
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
+        foreach (var entry in rows) Assert.True(history.Import(entry, item, _cutoff));
+        history.Record(item, new UserItemActivity { LastPlayedDate = rows.Max(row => row.StartedAtUtc).UtcDateTime, Played = true, PlayCount = 100 }, _cutoff, _cutoff);
+        var journals = new UserActivityHistoryStore(_directory);
+        journals.Save(_userId, history);
+        var report = Build(journals.Load(_userId));
+        Assert.Empty(report.Items);
+        var music = report.Music!;
+        Assert.Equal(2, music.PlaybackReportingPlayCount);
+        var track = Assert.Single(music.Items);
+        Assert.Equal(2, track.PlayCount);
+        Assert.Equal(1200, track.ActiveSeconds);
+        Assert.Equal(1200, track.EstimatedSeconds);
+        Assert.Equal(2400, music.Months.SelectMany(month => month.Genres!).Sum(genre => genre.ActiveSeconds));
+        var reports = new YearlyRewindStore(_directory);
+        Assert.True(reports.Publish(report));
+        Assert.Equal(2, reports.Load(_userId)!.Music!.PlaybackReportingPlayCount);
     }
 
     [Fact]
@@ -769,6 +797,245 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
         Assert.True(store.Load(_userId).PlaybackReportingImportCompleted);
         Assert.False(store.Load(newcomer.Id).PlaybackReportingImportCompleted);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void VideoOnlyJournalsImportMusicOnceAtItsOwnBoundaryWithoutChangingVideoOrFrozenReports(bool hasMusicBoundary, bool frozen)
+    {
+        using var db = Database();
+        var videoBoundary = _localCutoff.AddMonths(-11);
+        var musicBoundary = hasMusicBoundary ? _localCutoff.AddDays(-1) : _localCutoff;
+        Insert(db, videoBoundary.AddDays(-1).ToString("O", CultureInfo.InvariantCulture));
+        var original = Assert.Single(Reader().Read(_localCutoff));
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = videoBoundary };
+        history.Import(original, Item(), _localCutoff.AddDays(-2));
+        history.PlaybackReportingImportCompleted = true;
+        if (hasMusicBoundary) history.MusicRecordingStartedAtUtc = musicBoundary;
+        var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
+        store.Save(_userId, history);
+        var reports = new YearlyRewindStore(Path.Join(_directory, "jellyfin-watchback"));
+        var previous = YearlyRewindAggregator.Build(_userId, history, _localCutoff.AddYears(-1), _localCutoff, _localCutoff, TimeZoneInfo.Local);
+        if (frozen) Assert.True(reports.Publish(previous));
+        using (var update = db.CreateCommand())
+        {
+            update.CommandText = "UPDATE PlaybackActivity SET PlayDuration=1200";
+            update.ExecuteNonQuery();
+        }
+
+        Insert(db, videoBoundary.AddDays(1).ToString("O", CultureInfo.InvariantCulture));
+        Insert(db, videoBoundary.AddDays(-2).ToString("O", CultureInfo.InvariantCulture), type: "Audio");
+        Insert(db, musicBoundary.AddMonths(-1).ToString("O", CultureInfo.InvariantCulture), type: "Audio");
+        Insert(db, musicBoundary.AddMinutes(-5).ToString("O", CultureInfo.InvariantCulture), duration: "3600", type: "Audio");
+        Insert(db, musicBoundary.AddHours(1).ToString("O", CultureInfo.InvariantCulture), type: "Audio");
+        var configuration = new Mock<IPluginConfigurationService>();
+        configuration.SetupGet(value => value.IsInitialized).Returns(true);
+        configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration { YearlyRewindEnabled = true });
+        var user = new User("upgraded", "default", "default") { Id = _userId };
+        var users = new Mock<IUserManager>();
+        users.Setup(value => value.GetUsers()).Returns([user]);
+        var insights = new Mock<IUserActivityInsightsService>();
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
+        var clock = new TestClock { Now = _localCutoff };
+        var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
+        UserActivityHistoryService Collector() => new(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
+            new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
+            _paths.Object, clock, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
+        using (var service = Collector()) service.Tick(clock.Now);
+        var loaded = store.Load(_userId);
+        Assert.True(loaded.PlaybackReportingImportsCompleted);
+        Assert.Equal(videoBoundary, loaded.PlaybackReportingBeforeUtc);
+        Assert.Equal(musicBoundary, loaded.MusicRecordingStartedAtUtc);
+        var video = Assert.Single(loaded.ImportedPlayback, row => row.Item.ItemType == "Movie");
+        Assert.Equal(original.SourceKey, video.SourceKey);
+        Assert.Equal(600, video.ActiveSeconds);
+        Assert.Equal(_localCutoff.AddDays(-2), video.ImportedAtUtc);
+        var audio = loaded.ImportedPlayback.Where(row => row.Item.ItemType == "Audio").ToArray();
+        Assert.Equal(3, audio.Length);
+        Assert.Equal(1500, audio.Sum(row => row.ActiveSeconds));
+        Assert.All(audio, row => Assert.True(row.StartedAtUtc < musicBoundary));
+        var report = consumer.Load(_userId)!;
+        if (frozen)
+        {
+            Assert.Equal(previous.SnapshotId, report.SnapshotId);
+            Assert.Null(report.Music);
+        }
+        else
+        {
+            Assert.Equal(3, report.Music!.PlaybackReportingPlayCount);
+            Assert.Equal(1500, Assert.Single(report.Music.Items).ActiveSeconds);
+            Assert.Equal(600, Assert.Single(report.Items).ActiveSeconds);
+        }
+
+        _plugins.SetupGet(value => value.Plugins).Throws(new IOException("Completed categories must not be read again"));
+        clock.Now = clock.Now.AddHours(2);
+        using (var restarted = Collector()) restarted.Tick(clock.Now);
+        var afterRestart = store.Load(_userId);
+        Assert.True(afterRestart.PlaybackReportingImportsCompleted);
+        Assert.Equal(videoBoundary, afterRestart.PlaybackReportingBeforeUtc);
+        Assert.Equal(musicBoundary, afterRestart.MusicRecordingStartedAtUtc);
+        Assert.Equal(4, afterRestart.ImportedPlayback.Count);
+        Assert.Equal(report.SnapshotId, consumer.Load(_userId)!.SnapshotId);
+        _plugins.VerifyGet(value => value.Plugins, Times.Exactly(2));
+    }
+
+    [Fact]
+    public void MusicBoundaryCapsAudioDurationAndRejectsAudioOutsideItsOwnWindow()
+    {
+        var history = new UserActivityHistory
+        {
+            PlaybackReportingBeforeUtc = _cutoff.AddMonths(-10), PlaybackReportingImportCompleted = true,
+            MusicRecordingStartedAtUtc = _cutoff.AddDays(-1)
+        };
+        var item = Item() with { ItemType = "Audio" };
+        var entry = new PlaybackReportingReader.Entry("audio-boundary", _userId, _itemId, "Audio", "Track", _cutoff.AddDays(-1).AddMinutes(-5), 3600);
+        Assert.True(history.Import(entry, item, _cutoff));
+        Assert.False(history.Import(entry with { SourceKey = "late", StartedAtUtc = _cutoff.AddDays(-1) }, item, _cutoff));
+        Assert.False(history.Import(entry with { SourceKey = "video" }, Item(), _cutoff));
+        var store = new UserActivityHistoryStore(_directory);
+        store.Save(_userId, history);
+        var loaded = store.Load(_userId);
+        Assert.Equal(300, Assert.Single(loaded.ImportedPlayback).ActiveSeconds);
+        Assert.Equal(300, Assert.Single(Build(loaded).Music!.Items).ActiveSeconds);
+        loaded.PlaybackReportingMusicImportCompleted = true;
+        Assert.False(loaded.Import(entry with { SourceKey = "completed" }, item, _cutoff));
+        loaded.MusicRecordingStartedAtUtc = entry.StartedAtUtc;
+        Assert.Throws<InvalidDataException>(() => store.Save(_userId, loaded));
+        Assert.Empty(YearlyRewindAggregator.EligibleImports(loaded, _cutoff.AddYears(-1), _cutoff, _cutoff));
+        loaded.MusicRecordingStartedAtUtc = null;
+        Assert.Throws<InvalidDataException>(() => store.Save(_userId, loaded));
+    }
+
+    [Fact]
+    public void PendingMusicImportBlocksPublicationEvenWhenVideoImportWindowPredatesTheReport()
+    {
+        using var db = Database(create: false); // An installed source with an unavailable table must be retried.
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _localCutoff.AddYears(-2), PlaybackReportingImportCompleted = true };
+        var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
+        store.Save(_userId, history);
+        var configuration = new Mock<IPluginConfigurationService>();
+        configuration.SetupGet(value => value.IsInitialized).Returns(true);
+        configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration { YearlyRewindEnabled = true });
+        var user = new User("upgraded", "default", "default") { Id = _userId };
+        var users = new Mock<IUserManager>();
+        users.Setup(value => value.GetUsers()).Returns([user]);
+        var insights = new Mock<IUserActivityInsightsService>();
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
+        var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
+        using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, Mock.Of<ILibraryManager>(),
+            new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
+            _paths.Object, new TestClock { Now = _localCutoff }, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
+        service.Tick(_localCutoff);
+        Assert.Null(consumer.Load(_userId));
+        Assert.True(store.Load(_userId).PlaybackReportingImportCompleted);
+        Assert.False(store.Load(_userId).PlaybackReportingMusicImportCompleted);
+        using var repaired = Database();
+        Insert(repaired, _localCutoff.AddDays(-1).ToString("O", CultureInfo.InvariantCulture), type: "Audio");
+        service.Tick(_localCutoff.AddSeconds(30));
+        Assert.Null(consumer.Load(_userId));
+        service.Tick(_localCutoff.AddMinutes(1));
+        Assert.True(store.Load(_userId).PlaybackReportingImportsCompleted);
+        Assert.Equal(_localCutoff, store.Load(_userId).MusicRecordingStartedAtUtc);
+        Assert.Equal(1, consumer.Load(_userId)!.Music!.PlaybackReportingPlayCount);
+        _plugins.VerifyGet(value => value.Plugins, Times.Exactly(2));
+    }
+
+    [Fact]
+    public void FailedMusicImportSavePreservesTheCompletedVideoMarkerUntilRetry()
+    {
+        using var db = Database();
+        Insert(db, _localCutoff.AddDays(-1).ToString("O", CultureInfo.InvariantCulture), type: "Audio");
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _localCutoff.AddYears(-2), PlaybackReportingImportCompleted = true };
+        var store = new UserActivityHistoryStore(Path.Join(_directory, "jellyfin-watchback"));
+        store.Save(_userId, history);
+        var configuration = new Mock<IPluginConfigurationService>();
+        configuration.SetupGet(value => value.IsInitialized).Returns(true);
+        configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration { YearlyRewindEnabled = true });
+        var user = new User("upgraded", "default", "default") { Id = _userId };
+        var users = new Mock<IUserManager>();
+        users.Setup(value => value.GetUsers()).Returns([user]);
+        var insights = new Mock<IUserActivityInsightsService>();
+        insights.Setup(value => value.BuildActivityReport()).Returns(new UserActivityResult { GeneratedAt = _localCutoff.UtcDateTime });
+        var journal = Path.Join(_directory, "jellyfin-watchback", "activity-history", _userId.ToString("N") + ".json");
+        var library = new Mock<ILibraryManager>();
+        library.Setup(value => value.GetItemById(_itemId)).Callback(() =>
+        {
+            if (File.Exists(journal))
+            {
+                File.Move(journal, journal + ".saved");
+                Directory.CreateDirectory(journal);
+            }
+        });
+        var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
+        using var service = new UserActivityHistoryService(configuration.Object, Mock.Of<ISessionManager>(), users.Object, library.Object,
+            new VirtualItemDetector(_paths.Object, NullLogger<VirtualItemDetector>.Instance), insights.Object, Mock.Of<IUserActivityCacheService>(),
+            _paths.Object, new TestClock { Now = _localCutoff }, [consumer], NullLogger<UserActivityHistoryService>.Instance, Reader());
+        service.Tick(_localCutoff);
+        Assert.Null(consumer.Load(_userId));
+        Directory.Delete(journal);
+        File.Move(journal + ".saved", journal);
+        library.Reset();
+        service.Tick(_localCutoff.AddSeconds(30));
+        Assert.True(store.Load(_userId).PlaybackReportingImportCompleted);
+        Assert.False(store.Load(_userId).PlaybackReportingMusicImportCompleted);
+        Assert.Null(consumer.Load(_userId));
+        service.Tick(_localCutoff.AddMinutes(1));
+        var loaded = store.Load(_userId);
+        Assert.True(loaded.PlaybackReportingImportsCompleted);
+        Assert.Single(loaded.ImportedPlayback);
+        Assert.Equal(1, consumer.Load(_userId)!.Music!.PlaybackReportingPlayCount);
+    }
+
+    [Fact]
+    public void AdjacentAudioImportReportsRetainMusicComparisonWithoutVideoComparison()
+    {
+        YearlyRewindSnapshot Report(DateTimeOffset cutoff, YearlyRewindSnapshot? previous = null)
+        {
+            var history = new UserActivityHistory { PlaybackReportingBeforeUtc = cutoff.AddYears(-2), MusicRecordingStartedAtUtc = cutoff };
+            var entry = new PlaybackReportingReader.Entry("audio", _userId, _itemId, "Audio", "Track", cutoff.AddDays(-1), 600);
+            history.Import(entry, Item() with { ItemType = "Audio" }, cutoff);
+            return YearlyRewindAggregator.Build(_userId, history, cutoff.AddYears(-1), cutoff, cutoff, TimeZoneInfo.Utc, previous);
+        }
+
+        var previous = Report(_cutoff.AddYears(-1));
+        Assert.Equal("NotCollected", previous.DataState);
+        Assert.Equal("Partial", previous.Music!.DataState);
+        var report = Report(_cutoff, previous);
+        Assert.Null(report.Comparison);
+        Assert.Equal(600, report.Music!.Comparison!.ActiveSeconds);
+        Assert.Equal(1, report.Music.Comparison.TrackCount);
+        Assert.Equal(1, report.Music.Comparison.PlayCount);
+        var store = new YearlyRewindStore(_directory);
+        Assert.True(store.Publish(report));
+        Assert.NotNull(store.Load(_userId)!.Music!.Comparison);
+    }
+
+    [Theory]
+    [InlineData(false, false, "unknown", "unknown", false)]
+    [InlineData(false, true, "before", "overlap", true)]
+    [InlineData(true, false, "overlap", "before", true)]
+    [InlineData(false, false, "before", "before", true)]
+    [InlineData(false, false, "overlap", "before", false)]
+    [InlineData(false, false, "before", "overlap", false)]
+    [InlineData(false, true, "unknown", "overlap", false)]
+    public void PublicationWaitsForEachRelevantPendingImport(bool videoCompleted, bool musicCompleted, string videoWindow, string musicWindow, bool publish)
+    {
+        var configuration = new Mock<IPluginConfigurationService>();
+        configuration.SetupGet(value => value.IsInitialized).Returns(true);
+        configuration.Setup(value => value.GetConfiguration()).Returns(new PluginConfiguration { YearlyRewindEnabled = true });
+        var start = YearlyRewindWindow.PeriodStart(_localCutoff, "12-15", TimeZoneInfo.Local);
+        DateTimeOffset? Boundary(string window) => window == "unknown" ? null : window == "before" ? start : start.AddMinutes(1);
+        var history = new UserActivityHistory
+        {
+            PlaybackReportingBeforeUtc = Boundary(videoWindow), PlaybackReportingImportCompleted = videoCompleted,
+            MusicRecordingStartedAtUtc = Boundary(musicWindow), PlaybackReportingMusicImportCompleted = musicCompleted
+        };
+        var user = new User("test", "default", "default") { Id = _userId };
+        var consumer = new YearlyRewindService(configuration.Object, _paths.Object, NullLogger<YearlyRewindService>.Instance);
+        ((IUserActivityHistoryConsumer)consumer).Tick(_localCutoff, [user], _ => history, true, false);
+        Assert.Equal(publish, consumer.Load(_userId) is not null);
     }
 
     private sealed class TestClock : TimeProvider

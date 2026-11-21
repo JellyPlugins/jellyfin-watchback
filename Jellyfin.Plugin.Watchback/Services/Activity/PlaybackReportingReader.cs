@@ -70,7 +70,7 @@ internal sealed class PlaybackReportingReader
                 || !Guid.TryParse(reader.GetString(1), out var user) || user == Guid.Empty
                 || !Guid.TryParse(reader.GetString(2), out var item) || item == Guid.Empty
                 || !DateTime.TryParseExact(reader.GetString(0), TimestampFormats, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var local)
-                || reader.GetString(3) is not ("Movie" or "Episode")
+                || reader.GetString(3) is not ("Movie" or "Episode" or "Audio")
                 || !double.TryParse(Convert.ToString(reader.GetValue(5), CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
                 || !double.IsFinite(seconds) || seconds <= 0 || (local.Kind == DateTimeKind.Unspecified && TimeZoneInfo.Local.IsInvalidTime(local)))
             {

@@ -129,6 +129,128 @@ public sealed class YearlyRewindStoreTests : IDisposable
         Assert.Equal(current.SnapshotId, store.Load(_userId)!.SnapshotId);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FullAndLegacyGenreTimesRoundTripWithoutRewritingFrozenReports(bool fullTime)
+    {
+        var snapshot = Snapshot(2026) with
+        {
+            FullTimePerGenre = fullTime,
+            Months = [new YearlyRewindMonth { ActiveSeconds = 3600, Genres = [
+                new YearlyRewindGenre { Name = "Drama", ActiveSeconds = fullTime ? 3600 : 1800 },
+                new YearlyRewindGenre { Name = "Adventure", ActiveSeconds = fullTime ? 3600 : 1800 }] }]
+        };
+        var store = new YearlyRewindStore(_directory);
+        Assert.True(store.Publish(snapshot));
+        Assert.Equal(fullTime, store.Load(_userId)!.FullTimePerGenre);
+        snapshot.Months[0].Genres![0] = new YearlyRewindGenre { Name = "Drama", ActiveSeconds = 7200 };
+        Assert.Throws<InvalidDataException>(() => store.Publish(snapshot));
+        snapshot.Months[0].Genres![0] = new YearlyRewindGenre { Name = "Drama", ActiveSeconds = 0 };
+        snapshot.Months[0].Genres![1] = new YearlyRewindGenre { Name = "Adventure", ActiveSeconds = 0 };
+        Assert.Throws<InvalidDataException>(() => store.Publish(snapshot));
+        Assert.Equal(fullTime ? 3600 : 1800, store.Load(_userId)!.Months[0].Genres![0].ActiveSeconds);
+    }
+
+    [Theory]
+    [InlineData("negative")]
+    [InlineData("too-long")]
+    [InlineData("zero-start")]
+    [InlineData("zero-end")]
+    [InlineData("missing-start")]
+    [InlineData("missing-end")]
+    [InlineData("wrong-span")]
+    public void InvalidCombinedStreakCannotReplaceAPublishedReport(string corruption)
+    {
+        var store = new YearlyRewindStore(_directory);
+        var current = Snapshot(2026);
+        Assert.True(store.Publish(current));
+        var first = new DateOnly(2026, 7, 1);
+        var streak = new YearlyRewindStreak { Days = 3, Start = first, End = first.AddDays(2) };
+        streak = corruption switch
+        {
+            "negative" => streak with { Days = -1, Start = null, End = null },
+            "too-long" => streak with { Days = 4, End = first.AddDays(3) },
+            "zero-start" => streak with { Days = 0, End = null },
+            "zero-end" => streak with { Days = 0, Start = null },
+            "missing-start" => streak with { Start = null },
+            "missing-end" => streak with { End = null },
+            "wrong-span" => streak with { End = first },
+            _ => throw new ArgumentOutOfRangeException(nameof(corruption))
+        };
+        var next = Snapshot(2027) with { ActiveDays = 3, ActivityStreak = streak };
+        Assert.Throws<InvalidDataException>(() => store.Publish(next));
+        Assert.Equal(current.SnapshotId, store.Load(_userId)!.SnapshotId);
+    }
+
+    [Fact]
+    public void CombinedStreakRoundTripsWhenOptionalMusicInsightsAreUnavailable()
+    {
+        var store = new YearlyRewindStore(_directory);
+        var snapshot = Snapshot(2026) with
+        {
+            ActiveDays = 1,
+            ActivityStreak = new YearlyRewindStreak { Days = 1, Start = new DateOnly(2026, 7, 1), End = new DateOnly(2026, 7, 1) },
+            Music = Snapshot(2026) with { ActiveDays = 1, Items = [new YearlyRewindItem { ItemId = Guid.NewGuid(), ItemType = "Audio", Name = "Track", ActiveSeconds = 123, PlayCount = 1 }] }
+        };
+        Assert.True(store.Publish(snapshot));
+        var loaded = store.Load(_userId)!;
+        Assert.Equal(snapshot.ActivityStreak, loaded.ActivityStreak);
+        Assert.Null(loaded.Insights);
+        Assert.Null(loaded.Music!.Insights);
+        Assert.Equal(1, loaded.Music.ActiveDays);
+        Assert.Equal("Audio", Assert.Single(loaded.Music.Items).ItemType);
+    }
+
+    [Fact]
+    public void NullMonthlyGenreIsRejectedWithoutOverwritingThePublishedReport()
+    {
+        var store = new YearlyRewindStore(_directory);
+        var current = Snapshot(2026);
+        Assert.True(store.Publish(current));
+        var invalid = Snapshot(2027) with
+        {
+            FullTimePerGenre = true,
+            Months = [new YearlyRewindMonth { ActiveSeconds = 3600, Genres = [null!, new YearlyRewindGenre { Name = "Drama", ActiveSeconds = 3600 }] }]
+        };
+        Assert.Throws<InvalidDataException>(() => store.Publish(invalid));
+        Assert.Equal(current.SnapshotId, store.Load(_userId)!.SnapshotId);
+        Assert.Single(Directory.GetFiles(_directory, "*.json", SearchOption.AllDirectories));
+    }
+
+    [Theory]
+    [InlineData("nested")]
+    [InlineData("missing-items")]
+    [InlineData("period-start")]
+    [InlineData("cutoff")]
+    [InlineData("generation")]
+    [InlineData("zone")]
+    [InlineData("video-item")]
+    [InlineData("null-item")]
+    public void InvalidMusicCannotReplaceAnExistingReport(string corruption)
+    {
+        var store = new YearlyRewindStore(_directory);
+        var current = Snapshot(2026);
+        Assert.True(store.Publish(current));
+        var next = Snapshot(2027);
+        var music = next with { Items = [next.Items[0] with { ItemType = "Audio" }] };
+        music = corruption switch
+        {
+            "nested" => music with { Music = music },
+            "missing-items" => music with { Items = null! },
+            "period-start" => music with { PeriodStartUtc = music.PeriodStartUtc.AddDays(1) },
+            "cutoff" => music with { SnapshotAtUtc = music.SnapshotAtUtc.AddSeconds(-1) },
+            "generation" => music with { GeneratedAtUtc = music.GeneratedAtUtc.AddSeconds(1) },
+            "zone" => music with { TimeZoneId = "Europe/Berlin" },
+            "video-item" => music with { Items = next.Items },
+            "null-item" => music with { Items = [null!] },
+            _ => throw new ArgumentOutOfRangeException(nameof(corruption))
+        };
+        Assert.Throws<InvalidDataException>(() => store.Publish(next with { Music = music }));
+        Assert.Equal(current.SnapshotId, store.Load(_userId)!.SnapshotId);
+        Assert.Single(Directory.GetFiles(_directory, "*.json", SearchOption.AllDirectories));
+    }
+
     [Fact]
     public void ExistingOversizedPendingIsQuarantinedWithoutBlockingAReplacement()
     {

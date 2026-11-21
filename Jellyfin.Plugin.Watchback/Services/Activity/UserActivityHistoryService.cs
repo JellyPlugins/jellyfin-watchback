@@ -12,6 +12,7 @@ using Jellyfin.Plugin.Watchback.Services.Common;
 using Jellyfin.Plugin.Watchback.Services.ConfigAccess;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
@@ -143,6 +144,12 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         foreach (var user in availableUsers)
         {
             var history = History(user.Id);
+            if (!history.MusicRecordingStartedAtUtc.HasValue)
+            {
+                history.MusicRecordingStartedAtUtc = now;
+                _dirty.Add(user.Id);
+            }
+
             if (!history.PlaybackReportingBeforeUtc.HasValue)
             {
                 history.PlaybackReportingBeforeUtc = history.Coverage.Select(period => (DateTimeOffset?)period.StartUtc).Min() ?? now;
@@ -171,7 +178,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                     consumer.Tick(now, availableUsers, History, refreshed, true);
                 }
 
-                foreach (var group in availableUsers.GroupBy(user => _reporting is null || History(user.Id).PlaybackReportingImportCompleted))
+                foreach (var group in availableUsers.GroupBy(user => _reporting is null || History(user.Id).PlaybackReportingImportsCompleted))
                 {
                     consumer.Tick(now, group.ToArray(), History, refreshed, group.Key);
                 }
@@ -190,7 +197,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
 
     private void RefreshReporting(User[] users, DateTimeOffset now)
     {
-        var pending = users.Where(user => !History(user.Id).PlaybackReportingImportCompleted).ToArray();
+        var pending = users.Where(user => !History(user.Id).PlaybackReportingImportsCompleted).ToArray();
         if (_reporting is null || pending.Length == 0 || now < _nextReportingRefresh)
         {
             return;
@@ -208,7 +215,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 }
 
                 var history = History(user.Id);
-                if (entry.StartedAtUtc >= history.PlaybackReportingBeforeUtc)
+                if (history.IsPlaybackReportingImportCompleted(entry.ItemType) || entry.StartedAtUtc >= history.PlaybackReportingBoundary(entry.ItemType).GetValueOrDefault(now))
                 {
                     continue;
                 }
@@ -248,7 +255,10 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
             foreach (var user in pending)
             {
                 var history = History(user.Id);
+                var videoCompleted = history.PlaybackReportingImportCompleted;
+                var musicCompleted = history.PlaybackReportingMusicImportCompleted;
                 history.PlaybackReportingImportCompleted = true;
+                history.PlaybackReportingMusicImportCompleted = true;
                 try
                 {
                     // Persist the completion marker and imported rows atomically before
@@ -258,7 +268,8 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 }
                 catch (Exception ex) when (!ex.IsFatal())
                 {
-                    history.PlaybackReportingImportCompleted = false;
+                    history.PlaybackReportingImportCompleted = videoCompleted;
+                    history.PlaybackReportingMusicImportCompleted = musicCompleted;
                     _coverage.Remove(user.Id);
                     _dirty.Add(user.Id);
                     saveFailed = true;
@@ -381,7 +392,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                     consumer.Tick(now, users, History, true, true);
                 }
 
-                foreach (var group in users.GroupBy(user => _reporting is null || History(user.Id).PlaybackReportingImportCompleted))
+                foreach (var group in users.GroupBy(user => _reporting is null || History(user.Id).PlaybackReportingImportsCompleted))
                 {
                     consumer.Tick(now, group.ToArray(), History, true, group.Key);
                 }
@@ -502,7 +513,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 }
 
                 Tick(now, false, true);
-                if (args.Item is not Video video || _virtualItems.IsVirtual(args.Item) || args.IsAutomated)
+                if (args.Item is not (Video or Audio) || _virtualItems.IsVirtual(args.Item) || args.IsAutomated)
                 {
                     return;
                 }
@@ -533,7 +544,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
                 var progress = new UserPlaybackTracker.Progress(args.PlaybackPositionTicks, args.IsPaused, args.IsAutomated, start, stop, now);
                 foreach (var user in args.Users.DistinctBy(user => user.Id))
                 {
-                    RecordPlayback(user, video, metadata, session, progress);
+                    RecordPlayback(user, args.Item, metadata, session, progress);
                 }
 
                 if (stop)
@@ -556,7 +567,7 @@ internal sealed class UserActivityHistoryService : BackgroundService, IUserActiv
         }
     }
 
-    private void RecordPlayback(User user, Video item, UserPlaybackItem metadata, string session, UserPlaybackTracker.Progress progress)
+    private void RecordPlayback(User user, BaseItem item, UserPlaybackItem metadata, string session, UserPlaybackTracker.Progress progress)
     {
         if (user.HasPermission(PermissionKind.IsDisabled) || !item.IsVisible(user) || !TryHistory(user.Id, progress.At, out var history))
         {

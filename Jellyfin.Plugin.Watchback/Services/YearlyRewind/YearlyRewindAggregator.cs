@@ -18,7 +18,62 @@ internal static class YearlyRewindAggregator
         TimeZoneInfo zone,
         YearlyRewindSnapshot? previous = null)
     {
-        var sessions = history.Sessions.Where(session => session.QualifiedAtUtc <= cutoff && (session.Item.ItemType is "Movie" or "Episode")).ToArray();
+        var video = BuildMedia(userId, SelectMedia(history, false), start, cutoff, generated, zone, previous);
+        var music = BuildMedia(userId, SelectMedia(history, true), start, cutoff, generated, zone, previous?.Music);
+        return video with { Music = music.Items.Count > 0 ? music : null, ActivityStreak = BuildActivityStreak(history, start, cutoff, zone) };
+    }
+
+    private static YearlyRewindStreak BuildActivityStreak(UserActivityHistory history, DateTimeOffset start, DateTimeOffset cutoff, TimeZoneInfo zone)
+    {
+        var days = new HashSet<DateOnly>();
+        foreach (var interval in history.Sessions.Where(session => session.QualifiedAtUtc <= cutoff && session.Item.ItemType is "Movie" or "Episode" or "Audio")
+            .SelectMany(session => session.Intervals).Where(interval => interval.EndUtc > start && interval.StartUtc < cutoff))
+        {
+            var from = interval.StartUtc < start ? start : interval.StartUtc;
+            var to = interval.EndUtc > cutoff ? cutoff : interval.EndUtc;
+            var first = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(from, zone).DateTime);
+            var last = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(to.AddTicks(-1), zone).DateTime);
+            for (var date = first; date <= last; date = date.AddDays(1))
+            {
+                days.Add(date);
+            }
+        }
+
+        var insights = BuildInsights(days, new double[24], new double[7]);
+        return new YearlyRewindStreak { Days = insights.LongestStreakDays, Start = insights.LongestStreakStart, End = insights.LongestStreakEnd };
+    }
+
+    private static UserActivityHistory SelectMedia(UserActivityHistory history, bool music)
+    {
+        bool Matches(UserPlaybackItem item) => music ? item.ItemType == "Audio" : item.ItemType is "Movie" or "Episode";
+        var musicStart = history.MusicRecordingStartedAtUtc;
+        return new UserActivityHistory
+        {
+            Sessions = new Collection<UserPlaybackSession>(history.Sessions.Where(row => Matches(row.Item)).ToArray()),
+            Observations = new Collection<UserPlaybackObservation>(history.Observations.Where(row => Matches(row.Item)).ToArray()),
+            ImportedPlayback = new Collection<ImportedPlayback>(history.ImportedPlayback.Where(row => Matches(row.Item)).ToArray()),
+            PlaybackReportingBeforeUtc = history.PlaybackReportingBeforeUtc,
+            MusicRecordingStartedAtUtc = history.MusicRecordingStartedAtUtc,
+            Coverage = new Collection<UserActivityCoverage>(history.Coverage
+                .Where(period => !music || !musicStart.HasValue || period.EndUtc > musicStart.Value)
+                .Select(period => new UserActivityCoverage
+                {
+                    StartUtc = music && musicStart.HasValue && period.StartUtc < musicStart.Value ? musicStart.Value : period.StartUtc,
+                    EndUtc = period.EndUtc
+                }).ToArray())
+        };
+    }
+
+    private static YearlyRewindSnapshot BuildMedia(
+        Guid userId,
+        UserActivityHistory history,
+        DateTimeOffset start,
+        DateTimeOffset cutoff,
+        DateTimeOffset generated,
+        TimeZoneInfo zone,
+        YearlyRewindSnapshot? previous)
+    {
+        var sessions = history.Sessions.Where(session => session.QualifiedAtUtc <= cutoff).ToArray();
         var itemGroups = sessions.GroupBy(session => session.Item.ItemId).ToArray();
         var itemGenres = itemGroups.ToDictionary(group => group.Key, group => GenreNames(group.First().Item));
         var metadata = itemGroups.ToDictionary(group => group.Key, group => group.First().Item);
@@ -75,6 +130,7 @@ internal static class YearlyRewindAggregator
             DataState = state,
             Items = new Collection<YearlyRewindItem>(items),
             Months = new Collection<YearlyRewindMonth>(months),
+            FullTimePerGenre = true,
             ActiveDays = totals.Days.Count,
             Insights = BuildInsights(totals.Days, totals.Hourly, totals.Weekdays),
             Comparison = comparison,
@@ -85,7 +141,7 @@ internal static class YearlyRewindAggregator
 
     internal static IEnumerable<ImportedPlayback> EligibleImports(UserActivityHistory history, DateTimeOffset start, DateTimeOffset cutoff, DateTimeOffset generated)
         => history.ImportedPlayback.Where(row => row.ImportedAtUtc <= generated && row.StartedAtUtc >= start && row.StartedAtUtc < cutoff
-            && row.StartedAtUtc < (history.PlaybackReportingBeforeUtc ?? cutoff));
+            && row.StartedAtUtc < (history.PlaybackReportingBoundary(row.Item.ItemType) ?? cutoff));
 
     private static YearlyRewindMonth[] CreateMonths(DateTimeOffset start, DateTimeOffset cutoff, TimeZoneInfo zone)
     {
@@ -181,7 +237,7 @@ internal static class YearlyRewindAggregator
                 {
                     foreach (var genre in genres)
                     {
-                        totals.MonthlyGenres[monthIndex][genre] = totals.MonthlyGenres[monthIndex].GetValueOrDefault(genre) + (allocated / active.Count / genres.Length);
+                        totals.MonthlyGenres[monthIndex][genre] = totals.MonthlyGenres[monthIndex].GetValueOrDefault(genre) + (allocated / active.Count);
                     }
                 }
             }
@@ -212,7 +268,7 @@ internal static class YearlyRewindAggregator
                 months[index].EstimatedSeconds += duration;
                 foreach (var genre in itemGenres[id])
                 {
-                    totals.MonthlyGenres[index][genre] = totals.MonthlyGenres[index].GetValueOrDefault(genre) + (duration / itemGenres[id].Length);
+                    totals.MonthlyGenres[index][genre] = totals.MonthlyGenres[index].GetValueOrDefault(genre) + duration;
                 }
             }
         }
@@ -241,7 +297,7 @@ internal static class YearlyRewindAggregator
                     month.EstimatedSeconds += duration;
                     foreach (var genre in itemGenres[id])
                     {
-                        totals.MonthlyGenres[monthIndex][genre] = totals.MonthlyGenres[monthIndex].GetValueOrDefault(genre) + (duration / itemGenres[id].Length);
+                        totals.MonthlyGenres[monthIndex][genre] = totals.MonthlyGenres[monthIndex].GetValueOrDefault(genre) + duration;
                     }
                 }
             }
@@ -310,7 +366,7 @@ internal static class YearlyRewindAggregator
         // A lifetime counter is never assigned wholesale to a year. Retain at most one conservative
         // baseline per title, outside measured coverage, without inventing dates or playback intervals.
         return history.Observations.Where(row => row.ObservedAtUtc <= generated && row.LastPlayedAtUtc >= start && row.LastPlayedAtUtc < cutoff
-                && (row.Item.ItemType is "Movie" or "Episode") && (row.Played || row.PlayCount > 0 || row.PlaybackPositionTicks > 0)
+                && (row.Item.ItemType is "Movie" or "Episode" or "Audio") && (row.Played || row.PlayCount > 0 || row.PlaybackPositionTicks > 0)
                 && !history.Coverage.Any(period => row.LastPlayedAtUtc >= period.StartUtc && row.LastPlayedAtUtc < period.EndUtc))
             .GroupBy(row => row.Item.ItemId)
             .Select(group => group.OrderByDescending(row => row.LastPlayedAtUtc).ThenByDescending(row => row.SourceGeneratedAtUtc).First())
@@ -336,7 +392,7 @@ internal static class YearlyRewindAggregator
 
             foreach (var name in names.Where(name => name.Length > 0))
             {
-                genres[name] = genres.GetValueOrDefault(name) + (item.ActiveSeconds / names.Length);
+                genres[name] = genres.GetValueOrDefault(name) + item.ActiveSeconds;
             }
         }
 
@@ -352,6 +408,8 @@ internal static class YearlyRewindAggregator
             MovieCount = previous.Items.Count(item => item.ItemType == "Movie"),
             EpisodeCount = previous.Items.Count(item => item.ItemType == "Episode"),
             SeriesCount = previous.Items.Where(item => item.SeriesId.HasValue).Select(item => item.SeriesId).Distinct().Count(),
+            TrackCount = previous.Items.Count(item => item.ItemType == "Audio"),
+            PlayCount = previous.Items.Sum(item => item.PlayCount),
             ActiveDays = previous.ActiveDays,
             Genres = new Collection<string>(genres.Keys.Order(StringComparer.Ordinal).ToArray()),
             TopGenre = genres.OrderByDescending(pair => pair.Value).ThenBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => pair.Key).FirstOrDefault()

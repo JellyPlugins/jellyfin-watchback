@@ -25,6 +25,11 @@ internal sealed record YearlyRewindSnapshot
 
     public int ActiveDays { get; init; }
 
+    // Legacy snapshots contain divided monthly genre times and no combined activity dates.
+    public bool FullTimePerGenre { get; init; }
+
+    public YearlyRewindStreak? ActivityStreak { get; init; }
+
     public int PlaybackReportingPlayCount => Items.Sum(item => item.PlaybackReportingPlayCount);
 
     public int ReconstructedItemCount => Items.Count(item => item.HasReconstructedActivity);
@@ -40,6 +45,9 @@ internal sealed record YearlyRewindSnapshot
     public Guid? FirstItemId { get; init; }
 
     public DateTimeOffset? CollectionStartedAtUtc { get; init; }
+
+    // Separate media aggregates preserve existing video totals and frozen schema-1 reports.
+    public YearlyRewindSnapshot? Music { get; init; }
 
     public Collection<YearlyRewindMonth> Months { get; init; } = [];
 

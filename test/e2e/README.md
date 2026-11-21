@@ -11,6 +11,8 @@ docker compose -f test/e2e/compose.yml down
 
 The server suite includes a disabled Playback Reporting installation fixture with an inert assembly marker and a real SQLite history database. It verifies a one-time import into a newly created user's journal, its durable completion marker, source immutability, ignored later source changes, and frozen reports without running a second playback collector.
 
+Server and offline fixture runs write separate JUnit reports to `test/e2e/test-reports/`, outside Playwright's cleaned `test-results/` directory. CI uploads both reports to Codecov Test Analytics and retains them with the Playwright report. JUnit test names include the project name so Chromium and WebKit results remain distinct.
+
 Offline fixtures can run independently after syncing the production demo assets:
 
 ```sh

@@ -57,9 +57,9 @@ public sealed class YearlyRewindInsightTests : IDisposable
         Assert.Equal(new DateOnly(2026, 3, 2), insights.LongestStreakStart);
         Assert.Equal(new DateOnly(2026, 3, 3), insights.LongestStreakEnd);
         var genres = report.Months[2].Genres!;
-        Assert.Equal(2700, genres.Single(genre => genre.Name == "Drama").ActiveSeconds);
-        Assert.Equal(900, genres.Single(genre => genre.Name == "Adventure").ActiveSeconds);
-        Assert.Equal(3600, genres.Sum(genre => genre.ActiveSeconds));
+        Assert.Equal(3600, genres.Single(genre => genre.Name == "Drama").ActiveSeconds);
+        Assert.Equal(1800, genres.Single(genre => genre.Name == "Adventure").ActiveSeconds);
+        Assert.Equal(5400, genres.Sum(genre => genre.ActiveSeconds));
     }
 
     [Theory]
@@ -117,10 +117,98 @@ public sealed class YearlyRewindInsightTests : IDisposable
         var report = Build();
         var genres = report.Months[3].Genres!;
         Assert.Equal(3, genres.Count);
-        Assert.All(genres, genre => Assert.Equal(3600, genre.ActiveSeconds));
+        Assert.All(genres, genre => Assert.Equal(genre.Name is null ? 3600 : 7200, genre.ActiveSeconds));
         Assert.Contains(genres, genre => genre.Name is null);
         Assert.DoesNotContain(genres, genre => genre.Name == "Changed later");
-        Assert.All(report.Months, month => Assert.Equal(month.ActiveSeconds, month.Genres!.Sum(genre => genre.ActiveSeconds)));
+        Assert.Equal(18000, genres.Sum(genre => genre.ActiveSeconds));
+        Assert.Equal(10800, report.Months[3].ActiveSeconds);
+        Assert.True(report.FullTimePerGenre);
+    }
+
+    [Fact]
+    public void CombinedStreakJoinsVideoAndMusicDaysWithoutDoubleCountingSharedDays()
+    {
+        var first = Parse("2026-07-01T12:00:00Z");
+        Watch(first, first.AddMinutes(3));
+        Watch(first.AddDays(1), first.AddDays(1).AddMinutes(3));
+        var track = _movie with { ItemId = Guid.NewGuid(), ItemType = "Audio" };
+        for (var day = 1; day <= 3; day++) Watch(first.AddDays(day), first.AddDays(day).AddMinutes(3), track);
+        _history.Sessions.Add(new UserPlaybackSession
+        {
+            Item = track, Intervals = [new UserPlaybackInterval(first.AddDays(4), first.AddDays(4).AddMinutes(1))]
+        }); // An unqualified play cannot extend the streak.
+        var report = Build();
+        Assert.Equal(4, report.ActivityStreak!.Days);
+        Assert.Equal(new DateOnly(2026, 7, 1), report.ActivityStreak.Start);
+        Assert.Equal(new DateOnly(2026, 7, 4), report.ActivityStreak.End);
+        Assert.Equal(2, report.Insights!.LongestStreakDays);
+        Assert.Equal(3, report.Music!.Insights!.LongestStreakDays);
+        var store = new YearlyRewindStore(_directory);
+        Assert.True(store.Publish(report));
+        Assert.Equal(report.ActivityStreak, store.Load(_user)!.ActivityStreak);
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { ActivityStreak = report.ActivityStreak with { Days = 2, End = new DateOnly(2026, 7, 2) } }));
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { ActivityStreak = report.ActivityStreak with { Days = 6, End = new DateOnly(2026, 7, 6) } }));
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { ActivityStreak = report.ActivityStreak with { Start = null } }));
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { ActivityStreak = report.ActivityStreak with { End = new DateOnly(2026, 7, 1) } }));
+    }
+
+    [Theory]
+    [InlineData("Movie", true)]
+    [InlineData("Episode", true)]
+    [InlineData("Audio", true)]
+    [InlineData("AudioBook", false)]
+    [InlineData("MusicVideo", false)]
+    public void CombinedStreakClipsAnnualBoundariesAndIgnoresUnsupportedMedia(string itemType, bool included)
+    {
+        var start = Parse("2026-01-01T00:00:00Z");
+        var cutoff = start.AddYears(1);
+        var history = new UserActivityHistory
+        {
+            Coverage = [new UserActivityCoverage { StartUtc = start, EndUtc = cutoff }],
+            Sessions = [new UserPlaybackSession
+            {
+                Item = _movie with { ItemType = itemType }, QualifiedAtUtc = cutoff.AddDays(-1),
+                Intervals = [
+                    new UserPlaybackInterval(start.AddDays(-2), start.AddDays(-1)),
+                    new UserPlaybackInterval(start.AddMinutes(-15), start.AddMinutes(15)),
+                    new UserPlaybackInterval(start.AddDays(3), start.AddDays(3).AddMinutes(15)),
+                    new UserPlaybackInterval(cutoff.AddMinutes(-15), cutoff.AddMinutes(15)),
+                    new UserPlaybackInterval(cutoff.AddDays(1), cutoff.AddDays(1).AddMinutes(15))]
+            }]
+        };
+        var report = YearlyRewindAggregator.Build(_user, history, start, cutoff, cutoff.AddDays(2), TimeZoneInfo.Utc);
+        var items = report.Items.Concat(report.Music?.Items ?? []);
+        if (included)
+        {
+            Assert.Equal(2700, Assert.Single(items).ActiveSeconds);
+            Assert.Equal(1, report.ActivityStreak!.Days);
+            Assert.Equal(new DateOnly(2026, 1, 1), report.ActivityStreak.Start);
+            Assert.Equal(new DateOnly(2026, 1, 1), report.ActivityStreak.End);
+            Assert.Equal(3, report.ActiveDays + (report.Music?.ActiveDays ?? 0));
+        }
+        else
+        {
+            Assert.Empty(items);
+            Assert.Equal(0, report.ActivityStreak!.Days);
+            Assert.Null(report.ActivityStreak.Start);
+            Assert.Null(report.ActivityStreak.End);
+        }
+    }
+
+    [Fact]
+    public void ReconstructedActivityDoesNotInventCombinedStreakDates()
+    {
+        var cutoff = Parse("2026-12-15T00:00:00Z");
+        var history = new UserActivityHistory();
+        history.Record(_movie with { RuntimeTicks = TimeSpan.TicksPerHour },
+            new UserItemActivity { Played = true, LastPlayedDate = cutoff.AddDays(-1).UtcDateTime }, cutoff, cutoff);
+        var report = YearlyRewindAggregator.Build(_user, history, cutoff.AddYears(-1), cutoff, cutoff, TimeZoneInfo.Utc);
+        Assert.Equal(0, report.ActivityStreak!.Days);
+        Assert.Null(report.ActivityStreak.Start);
+        Assert.Null(report.ActivityStreak.End);
+        var store = new YearlyRewindStore(_directory);
+        Assert.True(store.Publish(report));
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { ActivityStreak = report.ActivityStreak with { Start = new DateOnly(2026, 12, 14) } }));
     }
 
     [Fact]
@@ -144,6 +232,29 @@ public sealed class YearlyRewindInsightTests : IDisposable
         var summary = json.RootElement.GetProperty("comparison");
         Assert.False(summary.TryGetProperty("items", out _));
         Assert.False(summary.TryGetProperty("comparison", out _));
+    }
+
+    [Fact]
+    public void MusicComparisonRetainsTrackAndPlayCountsAcrossAnnualReports()
+    {
+        var from = Parse("2026-04-01T10:00:00Z");
+        var track = _movie with { ItemType = "Audio" };
+        Watch(from, from.AddMinutes(3), track);
+        Watch(from.AddHours(1), from.AddHours(1).AddMinutes(3), track);
+        var previous = Build();
+        var cutoff = previous.SnapshotAtUtc.AddYears(1);
+        var history = new UserActivityHistory();
+        history.Record(track, new UserItemActivity { Played = true, PlayCount = 100, LastPlayedDate = cutoff.AddDays(-1).UtcDateTime }, cutoff, cutoff);
+        var report = YearlyRewindAggregator.Build(_user, history, previous.SnapshotAtUtc, cutoff, cutoff, TimeZoneInfo.Utc, previous);
+        var comparison = report.Music!.Comparison!;
+        Assert.Equal(1, comparison.TrackCount);
+        Assert.Equal(2, comparison.PlayCount);
+        Assert.Equal(360, comparison.ActiveSeconds);
+        var store = new YearlyRewindStore(_directory);
+        Assert.True(store.Publish(report));
+        Assert.Equal(2, store.Load(_user)!.Music!.Comparison!.PlayCount);
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { Music = report.Music with { Comparison = comparison with { TrackCount = -1 } } }));
+        Assert.Throws<InvalidDataException>(() => store.Publish(report with { Music = report.Music with { Comparison = comparison with { PlayCount = -1 } } }));
     }
 
     [Fact]
