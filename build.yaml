@@ -6,10 +6,7 @@ targetAbi: "12.4.0.0"
 framework: "net10.0"
 overview: "Your personal annual Jellyfin playback rewind."
 description: >
-  Records video playback and reconstructs available Jellyfin history. Creates one
-  frozen annual rewind per user, with viewing time, movies, episodes, active days,
-  monthly and genre charts, viewing patterns, streaks and previous-year comparisons.
-  Eight languages, configurable seasonal visibility and private per-user access.
+  Records video playback and reconstructs available Jellyfin history. Creates one frozen annual rewind per user, with viewing time, movies, episodes, active days, monthly and genre charts, viewing patterns, streaks and previous-year comparisons. Eight languages, configurable seasonal visibility and private per-user access.
 category: "General"
 owner: "JellyPlugins"
 artifacts:
