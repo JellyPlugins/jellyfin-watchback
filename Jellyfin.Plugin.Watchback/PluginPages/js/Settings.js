@@ -18,10 +18,10 @@ function renderSettings(cfg) {
     h += '<p id="settingsMsg" role="status" aria-live="polite" hidden></p>';
     h += '<div class="settings-save-band" id="settingsSaveBand" aria-hidden="true"><button type="button" class="action-btn" id="btnSaveSettings">' + escHtml(T('saveSettings', 'Save settings')) + '</button></div>';
     form.innerHTML = h;
-    _watchbackSnapshot = JSON.stringify(buildSettingsPayload());
+    settingsState.snapshot = JSON.stringify(buildSettingsPayload());
     form.oninput = updateSettingsState;
     form.onchange = updateSettingsState;
-    form.onsubmit = function (event) { event.preventDefault(); saveSettings(); };
+    form.onsubmit = function (event) { event.preventDefault(); void saveSettings(); };
     document.getElementById('btnSaveSettings').addEventListener('click', saveSettings);
 }
 
@@ -39,32 +39,32 @@ function updateSettingsState() {
     var enabled = toggle.checked;
     document.getElementById('cfgRewindDates').disabled = !enabled;
     validateRewindDates(buildSettingsPayload());
-    var dirty = JSON.stringify(buildSettingsPayload()) !== _watchbackSnapshot;
+    var dirty = JSON.stringify(buildSettingsPayload()) !== settingsState.snapshot;
     var band = document.getElementById('settingsSaveBand');
     band.classList.toggle('is-visible', dirty);
     band.setAttribute('aria-hidden', String(!dirty));
-    document.getElementById('btnSaveSettings').disabled = _watchbackSaving;
+    document.getElementById('btnSaveSettings').disabled = settingsState.saving;
 }
 
 function saveSettings() {
-    if (_watchbackSaving) return Promise.resolve();
+    if (settingsState.saving) return Promise.resolve();
     var payload = buildSettingsPayload();
     if (validateRewindDates(payload, true)) return Promise.resolve();
     var submitted = JSON.stringify(payload);
     var message = document.getElementById('settingsMsg');
-    _watchbackSaving = true;
+    settingsState.saving = true;
     document.getElementById('btnSaveSettings').disabled = true;
     message.textContent = T('savingSettings', 'Saving settings…');
     message.hidden = false;
     return api('Configuration', 'PUT', payload).then(function () {
-        _watchbackSnapshot = submitted;
+        settingsState.snapshot = submitted;
         message.textContent = '';
         message.hidden = true;
     }).catch(function () {
         message.textContent = T('settingsError', 'Could not save settings. Try again.');
         message.hidden = false;
     }).finally(function () {
-        _watchbackSaving = false;
+        settingsState.saving = false;
         updateSettingsState();
     });
 }

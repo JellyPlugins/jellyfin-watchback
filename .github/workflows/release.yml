@@ -324,7 +324,15 @@ jobs:
         echo "CHECKSUM_SHA256=$(cat checksum_sha256.txt)" >> "$GITHUB_ENV"
         # Jellyfin's InstallationManager verifies plugin packages with MD5, so the
         # manifest checksum field must be MD5. SHA256 is kept only for release notes.
-        md5sum "${PLUGIN_NAME}_${VERSION}.zip" | cut -d ' ' -f1 > checksum_md5.txt
+        python3 - "${PLUGIN_NAME}_${VERSION}.zip" <<'PY_CHECKSUM'
+        import hashlib
+        import pathlib
+        import sys
+
+        # Jellyfin requires MD5 for catalog interoperability, not as a security guarantee.
+        package = pathlib.Path(sys.argv[1]).read_bytes()
+        pathlib.Path("checksum_md5.txt").write_text(hashlib.md5(package, usedforsecurity=False).hexdigest() + "\n")
+        PY_CHECKSUM
         echo "CHECKSUM_MD5=$(cat checksum_md5.txt)" >> "$GITHUB_ENV"
 
     - name: Create tag

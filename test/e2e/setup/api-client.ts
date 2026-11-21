@@ -131,11 +131,13 @@ export async function runTaskToCompletion(
   }
 
   const deadline = Date.now() + timeoutMs;
-  // Accept Idle as "completed" only once we've EITHER observed a Running state OR seen a fresh LastExecutionResult.EndTimeUtc (newer than before we started).
-  // Polling is inherently sequential: each status check must await the previous one, so awaits inside this loop are intentional.
+  // Poll sequentially: a new request starts only after the previous response and delay.
   await sleep(500);
   let sawRunning = false;
-  while (Date.now() < deadline) {
+  async function pollTask(): Promise<TaskInfo> {
+    if (Date.now() >= deadline) {
+      throw new Error(`Task ${taskId} did not complete within ${timeoutMs}ms`);
+    }
     const res = await ctx.get(`/ScheduledTasks/${taskId}`);
     if (res.ok()) {
       const task = (await res.json()) as TaskInfo;
@@ -144,9 +146,10 @@ export async function runTaskToCompletion(
       const finishedFresh = end !== '' && end !== priorEnd;
       if (task.State === 'Idle' && (sawRunning || finishedFresh)) return task;
     }
-    await sleep(pollMs); // sequential polling delay must stay inside the loop
+    await sleep(pollMs);
+    return pollTask();
   }
-  throw new Error(`Task ${taskId} did not complete within ${timeoutMs}ms`);
+  return pollTask();
 }
 
 /** Convenience: run the plugin's HelperCleanup task to completion. */

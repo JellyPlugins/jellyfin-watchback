@@ -1,7 +1,4 @@
-var _translations = {};
-var _watchbackSnapshot = '';
-var _watchbackLoading = false;
-var _watchbackSaving = false;
+var settingsState = { translations: {}, snapshot: '', loading: false, saving: false };
 
 function settingsLanguage() {
     // Jellyfin updates the document language from the active user's display preference.
@@ -10,7 +7,7 @@ function settingsLanguage() {
 }
 
 function T(key, fallback) {
-    return Object.hasOwn(_translations, key) ? _translations[key] : (fallback || key);
+    return Object.hasOwn(settingsState.translations, key) ? settingsState.translations[key] : (fallback || key);
 }
 
 function escHtml(value) {
