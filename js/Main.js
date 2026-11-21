@@ -1,9 +1,9 @@
 function loadSettings() {
-    if (_watchbackLoading || !document.getElementById('settingsForm')) return Promise.resolve();
-    _watchbackLoading = true;
+    if (settingsState.loading || !document.getElementById('settingsForm')) return Promise.resolve();
+    settingsState.loading = true;
     return api('Configuration').then(function (cfg) {
         return api('Translations?lang=' + settingsLanguage()).then(function (strings) {
-            _translations = strings;
+            settingsState.translations = strings;
             renderSettings(cfg);
         });
     }).catch(function () {
@@ -14,10 +14,10 @@ function loadSettings() {
         retry.textContent = T('rewind.retry', 'Try again');
         retry.addEventListener('click', loadSettings);
         form.appendChild(retry);
-    }).finally(function () { _watchbackLoading = false; });
+    }).finally(function () { settingsState.loading = false; });
 }
 
 var configPage = document.getElementById('WatchbackConfigPage');
 if (configPage) configPage.addEventListener('viewshow', loadSettings);
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadSettings, {once: true});
-else loadSettings();
+else void loadSettings();
