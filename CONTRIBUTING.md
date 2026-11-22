@@ -33,6 +33,13 @@ dotnet test -c Release -p:RunVitest=false --collect:"XPlat Code Coverage"
 
 A normal `dotnet test` also runs the UI coverage suite when its dependencies are installed. CI runs Vitest in a dedicated job. Backend categories `Unit` and `Security` are independently reported to Codecov; authorization tests have the `Security` trait.
 
+The plugin compiles against `Microsoft.Data.Sqlite.Core` but excludes its runtime assets,
+using Jellyfin's initialized SQLite provider. Keep the plugin and test SQLite packages
+on the host's compatible major version (Jellyfin 12.4 ships 10.0.14). Review the SQLite
+`allowedVersions` rule in `.github/renovate.json5` when upgrading Jellyfin, and verify
+with the real-server E2E suite: unit tests supply their own SQLite runtime and cannot
+establish host compatibility.
+
 ## Browser code and UI tests
 
 ```sh

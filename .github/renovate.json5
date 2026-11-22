@@ -65,6 +65,16 @@
       "separateMajorMinor": true
     },
 
+    {
+      // Watchback excludes SQLite runtime assets and uses Jellyfin's initialized
+      // provider. Revisit this limit when upgrading the Jellyfin server packages
+      // and E2E image; a newer assembly major cannot load in Jellyfin 12.4.
+      "description": "Keep SQLite compatible with the Jellyfin 12.4 host runtime",
+      "matchDatasources": ["nuget"],
+      "matchPackageNames": ["Microsoft.Data.Sqlite", "Microsoft.Data.Sqlite.Core"],
+      "allowedVersions": "<11.0.0"
+    },
+
     // 2. C# test stack
     {
       "description": "C# unit test libraries",
