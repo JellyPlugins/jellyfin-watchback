@@ -20,6 +20,7 @@
   "rewind.title": "Dein Jahresrückblick",
   "rewind.tabTitle": "Jahresrückblick",
   "rewind.loading": "Dein Rückblick wird geladen…",
+  "rewind.missing": "Für deinen Benutzer ist kein Jahresrückblick vorhanden.",
   "rewind.unavailable": "Dein Rückblick ist noch nicht verfügbar.",
   "rewind.retry": "Erneut versuchen",
   "rewind.partial": "Dieser Rückblick enthält nur die Zeiträume, für die Wiedergaben erfasst wurden.",

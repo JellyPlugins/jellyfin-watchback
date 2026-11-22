@@ -20,6 +20,7 @@
   "rewind.title": "O seu resumo do ano",
   "rewind.tabTitle": "Resumo do ano",
   "rewind.loading": "A carregar a sua retrospetiva…",
+  "rewind.missing": "Não existe uma retrospetiva anual para o seu utilizador.",
   "rewind.unavailable": "A sua retrospetiva ainda não está disponível.",
   "rewind.retry": "Tentar novamente",
   "rewind.partial": "Esta retrospetiva inclui apenas os períodos com reproduções registadas.",

@@ -1,5 +1,5 @@
 import { test, expect, request, type APIRequestContext } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { apiContext, normalUserContext, loadAuth, p, requireNormalUser } from '../setup/api-client.ts';
@@ -22,10 +22,25 @@ test.describe.serial('YearlyRewind personal frozen report', () => {
    const response = await user!.get(p('YearlyRewind/My?userId=' + loadAuth().userId));
    expect(response.status()).toBe(200);
    expect(response.headers()['cache-control']).toContain('no-store');
+   expect(await response.text()).toBe(readFileSync(rewindPath(fixture.userId), 'utf8'));
    const report = await response.json();
    expect(field(report, 'UserId').replaceAll('-', '')).toBe(fixture.userId.replaceAll('-', ''));
    expect(field(report, 'SnapshotId').replaceAll('-', '')).toBe(fixture.snapshotId.replaceAll('-', ''));
    expect((await admin.get(p('Client/script'))).status()).toBe(200);
+ });
+ test('a missing file returns 404 while discovery keeps the annual tab visible', async () => {
+   const path = rewindPath(fixture.userId);
+   const saved = path + '.missing-test';
+   renameSync(path, saved);
+   try {
+     expect((await user!.get(p('YearlyRewind/My'))).status()).toBe(404);
+     const status = await (await user!.get(p('YearlyRewind/My/Status'))).json();
+     expect(field(status, 'TabVisible')).toBe(true);
+     expect(field(status, 'Available')).toBeUndefined();
+     expect(field(status, 'SnapshotId')).toBeUndefined();
+   } finally {
+     renameSync(saved, path);
+   }
  });
  test('outside the UI window the same report remains stored and personally accessible', async () => {
    expect((await admin.put(p('Configuration'), {data: {...original, YearlyRewindEnabled: true, YearlyRewindStartDate: todayMonthDay(1), YearlyRewindEndDate: todayMonthDay(1) }})).ok()).toBeTruthy();

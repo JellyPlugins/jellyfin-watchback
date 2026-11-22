@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Jellyfin.Plugin.Watchback.Services;
 using Jellyfin.Plugin.Watchback.Services.YearlyRewind;
 using Xunit;
 
@@ -40,6 +41,32 @@ public sealed class YearlyRewindStoreTests : IDisposable
     }
 
     [Fact]
+    public void OpenRead_MissingReportDoesNotCreateFilesOrUseAnotherUsersReport()
+    {
+        var store = new YearlyRewindStore(_directory);
+        Assert.Null(store.OpenRead(_userId));
+        Assert.False(Directory.Exists(_directory));
+        store.Publish(Snapshot(2026));
+        Assert.Null(store.OpenRead(Guid.NewGuid()));
+        using var stream = store.OpenRead(_userId);
+        Assert.NotNull(stream);
+    }
+
+    [Fact]
+    public void OpenRead_AnnualReplacementKeepsAnOpenResponseOnItsOriginalSnapshot()
+    {
+        var store = new YearlyRewindStore(_directory);
+        var original = Snapshot(2026);
+        store.Publish(original);
+        using var first = store.OpenRead(_userId);
+        var next = Snapshot(2027);
+        Assert.True(store.Publish(next));
+        using var second = store.OpenRead(_userId);
+        Assert.Equal(original.SnapshotId, JsonSerializer.Deserialize<YearlyRewindSnapshot>(first!, JsonDefaults.Options)!.SnapshotId);
+        Assert.Equal(next.SnapshotId, JsonSerializer.Deserialize<YearlyRewindSnapshot>(second!, JsonDefaults.Options)!.SnapshotId);
+    }
+
+    [Fact]
     public void Publish_RepeatedAndDelayedOlderTriggersCannotMutateCurrentReport()
     {
         var store = new YearlyRewindStore(_directory);
@@ -48,6 +75,22 @@ public sealed class YearlyRewindStoreTests : IDisposable
         Assert.False(store.Publish(Snapshot(2027)));
         Assert.False(store.Publish(Snapshot(2026)));
         Assert.Equal(current.SnapshotId, store.Load(_userId)!.SnapshotId);
+    }
+
+    [Fact]
+    public async Task OpenRead_DoesNotHoldTheStoreGateWhileTheResponseIsConsumed()
+    {
+        var store = new YearlyRewindStore(_directory);
+        var original = Snapshot(2026);
+        store.Publish(original);
+        using var response = store.OpenRead(_userId);
+        var next = Snapshot(2027);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var published = await Task.Run(() => store.Publish(next), cancellationToken).WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        Assert.True(published);
+        Assert.Equal(original.SnapshotId, JsonSerializer.Deserialize<YearlyRewindSnapshot>(response!, JsonDefaults.Options)!.SnapshotId);
+        using var current = store.OpenRead(_userId);
+        Assert.Equal(next.SnapshotId, JsonSerializer.Deserialize<YearlyRewindSnapshot>(current!, JsonDefaults.Options)!.SnapshotId);
     }
 
     [Fact]
