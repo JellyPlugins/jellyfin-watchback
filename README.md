@@ -59,8 +59,6 @@ No Jellyfin server required.
 
 Activity is recorded whenever the plugin runs, independently of whether the annual page is enabled. The page is **disabled by default**. Available Jellyfin state can reconstruct a known playback per title; old session history, exact viewing times and repeated plays cannot be recovered from lifetime totals. Estimates remain visibly separate from measured playback. Initially Watchback checks for the [Playback Reporting](https://github.com/jellyfin/jellyfin-plugin-playbackreporting) plugin to create the initial history as accurately as possible.
 
-At the annual cutoff, Watchback publishes one fixed JSON report per user. Opening the annual page loads that user's saved file directly, without rebuilding the report or querying the current library. Later playback, metadata changes and library permission changes do not alter a published report. If no report file exists for the signed-in user, the page displays a message. The next annual report replaces the previous file and retains its comparison values.
-
 Enable **Yearly Rewind** in the plugin settings and choose its annual display period (default **15 December–15 January**, inclusive). At 00:00 server time on the first day, the preceding annual period is frozen into one report per user. The report is replaced the next year. Hiding the tab after the configured end date keeps the report on disk. Changing the display settings never finalizes or rewrites an existing annual report.
 
 Genre charts count the full playback time for every genre assigned to a title. Their percentages use the sum of genre times, which can exceed actual playback time.
