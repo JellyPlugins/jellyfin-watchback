@@ -15,6 +15,9 @@
     var inFlight = null;
     var disposed = false;
     var refreshing = null;
+    var currentStatus = null;
+    var requestedLanguage = null;
+    var languageRevision = 0;
 
     function value(data, key) { return data?.[key] ?? data?.[key.charAt(0).toLowerCase() + key.slice(1)]; }
     function text(key) { return strings['rewind.' + key] || english[key] || key; }
@@ -42,6 +45,10 @@
         if (timer) clearTimeout(timer);
         timer = null;
         refreshing = null;
+        currentStatus = null;
+        requestedLanguage = null;
+        languageRevision++;
+        strings = {};
         inFlight = null;
         report = null;
         expectedSnapshotId = null;
@@ -503,12 +510,14 @@
         var current = readSession();
         if (!same(session, current)) { clear(); session = current; }
         if (!session || disposed) return;
+        refreshLanguage();
         if (refreshing) return;
         var epoch = generation;
         var owner = session;
         var nextDelay = 60000;
         refreshing = Promise.resolve(request('/Watchback/YearlyRewind/My/Status')).then(function (status) {
             if (!valid(epoch)) return;
+            currentStatus = status;
             var boundary = new Date(value(status, 'NextCheckAtUtc')).getTime() - new Date(value(status, 'ServerTimeUtc')).getTime();
             if (Number.isFinite(boundary)) nextDelay = Math.max(1000, Math.min(60000, boundary));
             if (!value(status, 'Enabled') || !value(status, 'TabVisible')) {
@@ -525,9 +534,9 @@
             }
             if (!registered && window.WatchbackTabs) {
                 registered = true;
-                window.WatchbackTabs.register(TAB, text('tabTitle') + ' ' + year(value(status, 'SnapshotAtUtc') || value(status, 'ServerTimeUtc') || Date.now(), value(status, 'TimeZoneId')), function (root) { panel = root; load(); }, 'history', function (root) { panel = root; load(); });
+                window.WatchbackTabs.register(TAB, tabTitle(), function (root) { panel = root; load(); }, 'history', function (root) { panel = root; load(); });
             } else {
-                window.WatchbackTabs?.updateTitle?.(TAB, text('tabTitle') + ' ' + year(value(status, 'SnapshotAtUtc') || value(status, 'ServerTimeUtc') || Date.now(), value(status, 'TimeZoneId')));
+                window.WatchbackTabs?.updateTitle?.(TAB, tabTitle());
                 if (panel && !report) load();
             }
         }, function () { if (valid(epoch)) clear(); }).finally(function () {
@@ -538,22 +547,36 @@
             }
         });
     }
-    function refresh() {
-        var current = readSession();
-        if (!same(session, current)) { clear(); session = current; strings = {}; }
-        if (!session) return;
-        var selected = (document.documentElement.lang || navigator.language || 'en').split(/[-_]/)[0].toLowerCase();
-        locale = ['en', 'de', 'fr', 'es', 'pt', 'zh', 'tr', 'sv'].includes(selected) ? selected : 'en';
-        var epoch = generation;
-        Promise.resolve(request('/Watchback/Translations?lang=' + locale)).then(function (data) {
-            if (!valid(epoch)) return;
-            strings = data || {}; probe();
-        }, function () { if (valid(epoch)) probe(); });
+    function tabTitle() {
+        return text('tabTitle') + ' ' + year(value(currentStatus, 'SnapshotAtUtc') || value(currentStatus, 'ServerTimeUtc') || Date.now(), value(currentStatus, 'TimeZoneId'));
     }
+    function refreshLanguage() {
+        if (!session || disposed) return;
+        var selected = (document.documentElement.lang || navigator.language || 'en').split(/[-_]/)[0].toLowerCase();
+        selected = ['en', 'de', 'fr', 'es', 'pt', 'zh', 'tr', 'sv'].includes(selected) ? selected : 'en';
+        if (requestedLanguage === selected) return;
+        requestedLanguage = selected;
+        var revision = ++languageRevision;
+        var epoch = generation;
+        Promise.resolve(request('/Watchback/Translations?lang=' + selected)).then(function (data) {
+            if (!valid(epoch) || revision !== languageRevision) return;
+            locale = selected;
+            strings = data || {};
+            if (registered) window.WatchbackTabs?.updateTitle?.(TAB, tabTitle());
+            if (report) render();
+            else if (panel) {
+                if (inFlight) panel.replaceChildren(node('p', text('loading')));
+                else if (!value(currentStatus, 'Available')) panel.replaceChildren(node('p', text('unavailable')));
+                else showError();
+            }
+        }, function () { if (valid(epoch) && revision === languageRevision) requestedLanguage = null; });
+    }
+    function refresh() { probe(); }
     function changing() { clear(); session = null; }
     function visible() { if (!document.hidden) probe(); }
     function dispose() {
         clear(); disposed = true;
+        languageObserver.disconnect();
         document.removeEventListener('jfw:session-changing', changing);
         document.removeEventListener('jfw:session-changed', refresh);
         document.removeEventListener('jfw:navigation', probe);
@@ -674,6 +697,9 @@
 `;
     document.head.append(style);
     window.WatchbackRewind = { dispose: function () { dispose(); style.remove(); } };
+    // The injected bundle can run before Jellyfin applies the signed-in user's language.
+    var languageObserver = new MutationObserver(refreshLanguage);
+    languageObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
     document.addEventListener('jfw:session-changing', changing);
     document.addEventListener('jfw:session-changed', refresh);
     document.addEventListener('jfw:navigation', probe);

@@ -113,6 +113,28 @@ test('uses the translated German heading and tab title with the snapshot year', 
  expect((window as any).WatchbackTabs.register.mock.calls[0][1]).toBe('Jahresrückblick 2026');
 });
 
+test('updates the tab and report when Jellyfin applies the user language after startup', async () => {
+ const fallback = api.ajax.getMockImplementation();
+ api.ajax.mockImplementation(args => args.url.includes('lang=de') ? Promise.resolve({'rewind.title': 'Dein Jahresrückblick', 'rewind.tabTitle': 'Jahresrückblick'}) : fallback(args));
+ loadYearlyRewindBundle(); await flush();
+ document.documentElement.lang = 'de-DE'; await flush();
+ expect(root.querySelector('h2')?.textContent).toBe('Dein Jahresrückblick 2026 (15.12.2025 – 14.12.2026)');
+ expect((window as any).WatchbackTabs.updateTitle).toHaveBeenCalledWith('yearly-rewind', 'Jahresrückblick 2026');
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(1);
+});
+
+test('slow translations do not delay loading the report and cannot overwrite a newer language', async () => {
+ let english: (data: unknown) => void;
+ const fallback = api.ajax.getMockImplementation();
+ api.ajax.mockImplementation(args => args.url.includes('lang=en') ? new Promise(done => { english = done; })
+  : args.url.includes('lang=de') ? Promise.resolve({'rewind.title': 'Dein Jahresrückblick', 'rewind.tabTitle': 'Jahresrückblick'}) : fallback(args));
+ loadYearlyRewindBundle(); await flush();
+ expect(root.querySelector('h2')?.textContent).toContain('Your year in review');
+ document.documentElement.lang = 'de'; await flush();
+ english!({'rewind.title': 'Late English'}); await flush();
+ expect(root.querySelector('h2')?.textContent).toContain('Dein Jahresrückblick');
+});
+
 function insights() {
  return {HourlySeconds: Array.from({length: 24}, (_, index) => index === 20 ? 3600 : index === 8 ? 600 : 0),
   WeekdaySeconds: [0, 0, 0, 4200, 0, 0, 0], LongestStreakDays: 2, LongestStreakStart: '2026-06-03', LongestStreakEnd: '2026-06-04'};
