@@ -146,7 +146,11 @@ internal sealed class YearlyRewindStore
                 || !double.IsFinite(item.EstimatedSeconds) || item.EstimatedSeconds < 0 || item.EstimatedSeconds > item.ActiveSeconds
                 || (item.EstimatedSeconds > 0 && !item.HasReconstructedActivity)
                 || item.PlaybackReportingPlayCount < 0 || item.PlaybackReportingPlayCount > item.PlayCount
-                || (item.PlaybackReportingPlayCount > 0 && !item.HasReconstructedActivity))
+                || !double.IsFinite(item.PlaybackReportingSeconds) || item.PlaybackReportingSeconds < 0
+                || item.PlaybackReportingSeconds + item.EstimatedSeconds > item.ActiveSeconds + Math.Max(0.001, item.ActiveSeconds * 1e-10)
+                || (item.PlaybackReportingSeconds > 0 && item.PlaybackReportingPlayCount == 0)
+                // Legacy reports stored imported seconds as estimates and have no separate duration.
+                || (item.PlaybackReportingPlayCount > 0 && item.PlaybackReportingSeconds == 0 && !item.HasReconstructedActivity))
             {
                 throw new InvalidDataException("The rewind snapshot contains an invalid item.");
             }
@@ -180,7 +184,7 @@ internal sealed class YearlyRewindStore
     {
         if (snapshot.Insights is { } insights)
         {
-            var total = snapshot.Items.Sum(item => item.ActiveSeconds - item.EstimatedSeconds);
+            var total = snapshot.Items.Sum(item => item.ActiveSeconds - item.EstimatedSeconds - item.PlaybackReportingSeconds);
             var tolerance = Math.Max(0.001, total * 1e-10);
             if (!double.IsFinite(total) || insights.HourlySeconds is null || insights.HourlySeconds.Count != 24
                 || insights.WeekdaySeconds is null || insights.WeekdaySeconds.Count != 7
@@ -214,6 +218,8 @@ internal sealed class YearlyRewindStore
             if (genres.Any(genre => genre is null || !double.IsFinite(genre.ActiveSeconds) || genre.ActiveSeconds < 0
                 || (genre.Name is not null && string.IsNullOrWhiteSpace(genre.Name)))
                 || !double.IsFinite(month.ActiveSeconds) || !double.IsFinite(month.EstimatedSeconds) || month.EstimatedSeconds < 0 || month.EstimatedSeconds > month.ActiveSeconds
+                || !double.IsFinite(month.PlaybackReportingSeconds) || month.PlaybackReportingSeconds < 0
+                || month.PlaybackReportingSeconds + month.EstimatedSeconds > month.ActiveSeconds + tolerance
                 || !double.IsFinite(genreSeconds)
                 || (snapshot.FullTimePerGenre
                     ? genreSeconds < month.ActiveSeconds - tolerance || genres.Any(genre => genre.ActiveSeconds > month.ActiveSeconds + tolerance)
@@ -232,6 +238,8 @@ internal sealed class YearlyRewindStore
                 || string.IsNullOrWhiteSpace(comparison.TimeZoneId) || comparison.DataState is not ("Ready" or "Empty" or "Partial")
                 || !double.IsFinite(comparison.ActiveSeconds) || comparison.ActiveSeconds < 0
                 || !double.IsFinite(comparison.EstimatedSeconds) || comparison.EstimatedSeconds < 0 || comparison.EstimatedSeconds > comparison.ActiveSeconds
+                || !double.IsFinite(comparison.PlaybackReportingSeconds) || comparison.PlaybackReportingSeconds < 0
+                || comparison.PlaybackReportingSeconds + comparison.EstimatedSeconds > comparison.ActiveSeconds + Math.Max(0.001, comparison.ActiveSeconds * 1e-10)
                 || comparison.ReconstructedItemCount < 0 || (comparison.EstimatedSeconds > 0 && comparison.ReconstructedItemCount == 0)
                 || comparison.TrackCount < 0 || comparison.PlayCount < 0
                 || comparison.MovieCount < 0 || comparison.EpisodeCount < 0 || comparison.SeriesCount < 0 || comparison.ActiveDays < 0

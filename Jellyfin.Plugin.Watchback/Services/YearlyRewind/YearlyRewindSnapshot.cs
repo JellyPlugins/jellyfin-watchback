@@ -32,6 +32,8 @@ internal sealed record YearlyRewindSnapshot
 
     public int PlaybackReportingPlayCount => Items.Sum(item => item.PlaybackReportingPlayCount);
 
+    public double PlaybackReportingSeconds => Items.Sum(item => item.PlaybackReportingSeconds);
+
     public int ReconstructedItemCount => Items.Count(item => item.HasReconstructedActivity);
 
     public int JellyfinReconstructedItemCount => Items.Count(item => item.HasJellyfinReconstructedActivity

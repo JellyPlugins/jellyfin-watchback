@@ -18,6 +18,9 @@ internal sealed record YearlyRewindComparison
 
     public double EstimatedSeconds { get; init; }
 
+    // Recorded duration imported from Playback Reporting; separate from inferred runtime.
+    public double PlaybackReportingSeconds { get; init; }
+
     public int ReconstructedItemCount { get; init; }
 
     public int MovieCount { get; init; }

@@ -82,14 +82,12 @@ internal static class YearlyRewindAggregator
         var totals = Measure(sessions, start, cutoff, zone, itemGenres, months);
         var imported = EligibleImports(history, start, cutoff, generated).ToArray();
         var importCounts = new Dictionary<Guid, int>();
-        AddImported(imported, metadata, itemGenres, estimated, importCounts, totals, months, cutoff);
-        var importedStarts = imported.ToLookup(row => row.Item.ItemId, row => row.StartedAtUtc);
-        // Independent playback-start handlers and timestamp precision can differ slightly.
-        // Match only starts within five seconds; later plays retain their own estimate.
-        // Reconstruct returns at most one row per item, so each import is checked at most once.
+        var importedSeconds = new Dictionary<Guid, double>();
+        AddImported(imported, metadata, itemGenres, importedSeconds, importCounts, totals, months, cutoff);
+        // A recorded source takes precedence over a lifetime-state fallback. Jellyfin's
+        // last-played timestamp does not prove an additional unrecorded playback.
         var reconstructed = Reconstruct(history, start, cutoff, generated)
-            .Where(row => !importedStarts[row.Item.ItemId].Any(started =>
-                (started - row.LastPlayedAtUtc!.Value).Duration() <= TimeSpan.FromSeconds(5))).ToArray();
+            .Where(row => !importCounts.ContainsKey(row.Item.ItemId)).ToArray();
         var reconstructedIds = reconstructed.Select(row => row.Item.ItemId).ToHashSet();
         AddReconstructed(reconstructed, metadata, itemGenres, estimated, totals, months);
         CompleteMonthlyGenres(months, totals);
@@ -105,6 +103,7 @@ internal static class YearlyRewindAggregator
             Genres = pair.Value.Genres,
             ActiveSeconds = seconds[pair.Key],
             EstimatedSeconds = estimated.GetValueOrDefault(pair.Key),
+            PlaybackReportingSeconds = importedSeconds.GetValueOrDefault(pair.Key),
             HasReconstructedActivity = estimated.ContainsKey(pair.Key),
             HasJellyfinReconstructedActivity = reconstructedIds.Contains(pair.Key),
             PlaybackReportingPlayCount = importCounts.GetValueOrDefault(pair.Key),
@@ -244,18 +243,18 @@ internal static class YearlyRewindAggregator
         }
     }
 
-    private static void AddImported(ImportedPlayback[] imported, Dictionary<Guid, UserPlaybackItem> metadata, Dictionary<Guid, string[]> itemGenres, Dictionary<Guid, double> estimated, Dictionary<Guid, int> counts, MeasuredPlayback totals, YearlyRewindMonth[] months, DateTimeOffset cutoff)
+    private static void AddImported(ImportedPlayback[] imported, Dictionary<Guid, UserPlaybackItem> metadata, Dictionary<Guid, string[]> itemGenres, Dictionary<Guid, double> importedSeconds, Dictionary<Guid, int> counts, MeasuredPlayback totals, YearlyRewindMonth[] months, DateTimeOffset cutoff)
     {
         foreach (var row in imported)
         {
             var id = row.Item.ItemId;
             metadata.TryAdd(id, row.Item);
             itemGenres.TryAdd(id, GenreNames(row.Item));
-            // Durations come from Playback Reporting, but their positions within a session
-            // are unknown. Assign them to the start month and do not invent viewing patterns.
+            // The duration is recorded, not inferred. Only its positions within a session
+            // are unknown: group by start month without inventing activity intervals.
             var duration = Math.Min(row.ActiveSeconds, (cutoff - row.StartedAtUtc).TotalSeconds);
             totals.Seconds[id] = totals.Seconds.GetValueOrDefault(id) + duration;
-            estimated[id] = estimated.GetValueOrDefault(id) + duration;
+            importedSeconds[id] = importedSeconds.GetValueOrDefault(id) + duration;
             counts[id] = counts.GetValueOrDefault(id) + 1;
             for (var index = 0; index < months.Length; index++)
             {
@@ -265,7 +264,7 @@ internal static class YearlyRewindAggregator
                 }
 
                 months[index].ActiveSeconds += duration;
-                months[index].EstimatedSeconds += duration;
+                months[index].PlaybackReportingSeconds += duration;
                 foreach (var genre in itemGenres[id])
                 {
                     totals.MonthlyGenres[index][genre] = totals.MonthlyGenres[index].GetValueOrDefault(genre) + duration;
@@ -404,6 +403,7 @@ internal static class YearlyRewindAggregator
             DataState = previous.DataState,
             ActiveSeconds = previous.Items.Sum(item => item.ActiveSeconds),
             EstimatedSeconds = previous.Items.Sum(item => item.EstimatedSeconds),
+            PlaybackReportingSeconds = previous.PlaybackReportingSeconds,
             ReconstructedItemCount = previous.ReconstructedItemCount,
             MovieCount = previous.Items.Count(item => item.ItemType == "Movie"),
             EpisodeCount = previous.Items.Count(item => item.ItemType == "Episode"),

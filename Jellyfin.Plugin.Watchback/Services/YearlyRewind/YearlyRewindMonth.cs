@@ -13,5 +13,8 @@ internal sealed class YearlyRewindMonth
 
     public double EstimatedSeconds { get; set; }
 
+    // Recorded duration imported from Playback Reporting; separate from inferred runtime.
+    public double PlaybackReportingSeconds { get; set; }
+
     public Collection<YearlyRewindGenre>? Genres { get; init; }
 }

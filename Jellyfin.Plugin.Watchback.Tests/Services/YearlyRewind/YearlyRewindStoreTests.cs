@@ -127,6 +127,51 @@ public sealed class YearlyRewindStoreTests : IDisposable
         Assert.Equal(original.SnapshotId, store.Load(_userId)!.SnapshotId);
     }
 
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(124)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Publish_RejectsInvalidRecordedImportDurations(double seconds)
+    {
+        var store = new YearlyRewindStore(_directory);
+        var snapshot = Snapshot(2026);
+        snapshot.Items[0] = snapshot.Items[0] with { PlaybackReportingSeconds = seconds, PlaybackReportingPlayCount = 1 };
+        Assert.Throws<InvalidDataException>(() => store.Publish(snapshot));
+    }
+
+    [Fact]
+    public void Publish_RejectsOverlappingEstimatedAndRecordedSecondsAndMissingSourceCounts()
+    {
+        var store = new YearlyRewindStore(_directory);
+        var snapshot = Snapshot(2026);
+        snapshot.Items[0] = snapshot.Items[0] with { PlaybackReportingSeconds = 123, PlaybackReportingPlayCount = 1, EstimatedSeconds = 1, HasReconstructedActivity = true };
+        Assert.Throws<InvalidDataException>(() => store.Publish(snapshot));
+        snapshot.Items[0] = snapshot.Items[0] with { EstimatedSeconds = 0, HasReconstructedActivity = false, PlaybackReportingPlayCount = 0 };
+        Assert.Throws<InvalidDataException>(() => store.Publish(snapshot));
+    }
+
+    [Fact]
+    public void Load_LegacyImportedEstimatesRemainFrozenWithoutBeingReclassified()
+    {
+        var store = new YearlyRewindStore(_directory);
+        var snapshot = Snapshot(2026);
+        snapshot.Items[0] = snapshot.Items[0] with { EstimatedSeconds = 123, HasReconstructedActivity = true, HasJellyfinReconstructedActivity = false, PlaybackReportingPlayCount = 1 };
+        store.Publish(snapshot);
+        var path = Assert.Single(Directory.GetFiles(_directory, "*.json", SearchOption.AllDirectories));
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+        json.AsObject().Remove("playbackReportingSeconds");
+        json["items"]![0]!.AsObject().Remove("playbackReportingSeconds");
+        File.WriteAllText(path, json.ToJsonString());
+        var frozen = File.ReadAllText(path);
+        var loaded = store.Load(_userId)!;
+        Assert.Equal(123, loaded.Items[0].EstimatedSeconds);
+        Assert.Equal(0, loaded.PlaybackReportingSeconds);
+        Assert.Equal(1, loaded.ReconstructedItemCount);
+        Assert.Equal(0, loaded.JellyfinReconstructedItemCount);
+        Assert.Equal(frozen, File.ReadAllText(path));
+    }
+
     [Fact]
     public void DeleteUser_DoesNotDeleteOtherUsers()
     {
