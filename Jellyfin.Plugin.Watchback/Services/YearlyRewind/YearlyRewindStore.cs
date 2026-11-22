@@ -39,9 +39,12 @@ internal sealed class YearlyRewindStore
         ValidateUserId(userId);
         try
         {
-            // Publication replaces files atomically. An open response keeps its original
-            // bytes while a new annual report can replace the directory entry.
-            return new FileStream(GetPath(userId), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            // Wait for publication, including any replacement retries, only while opening.
+            // The returned stream retains its bytes without holding the store gate.
+            lock (_gate)
+            {
+                return new FileStream(GetPath(userId), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            }
         }
         catch (FileNotFoundException)
         {

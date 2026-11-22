@@ -279,6 +279,8 @@ public sealed class YearlyRewindServiceTests : IDisposable
         var status = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(controller.GetStatus()).Value);
         Assert.Equal(enabled, status.GetProperty("Enabled").GetBoolean());
         Assert.Equal(enabled, status.GetProperty("TabVisible").GetBoolean());
+        if (enabled) Assert.Equal(Local(2026, 12, 15), status.GetProperty("SeasonStartUtc").GetDateTimeOffset());
+        else Assert.Equal(JsonValueKind.Null, status.GetProperty("SeasonStartUtc").ValueKind);
         Assert.False(status.TryGetProperty("Available", out _));
         Assert.False(status.TryGetProperty("SnapshotId", out _));
         Assert.Equal("private, no-store", controller.Response.Headers.CacheControl);
@@ -296,6 +298,25 @@ public sealed class YearlyRewindServiceTests : IDisposable
             var served = JsonSerializer.Deserialize<YearlyRewindSnapshot>(stream, JsonDefaults.Options)!;
             Assert.Equal(_user.Id, served.UserId);
         }
+    }
+
+    [Fact]
+    public void StatusDetectsAnnualRolloverForAnAlwaysVisibleTabWithoutOpeningAReport()
+    {
+        _config.YearlyRewindStartDate = "01-01";
+        _config.YearlyRewindEndDate = "12-31";
+        _clock.Now = Local(2026, 12, 31);
+        var controller = Controller();
+        var previous = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(controller.GetStatus()).Value);
+        Assert.True(previous.GetProperty("TabVisible").GetBoolean());
+        Assert.Equal(Local(2026, 1, 1), previous.GetProperty("SeasonStartUtc").GetDateTimeOffset());
+        Assert.Equal(Local(2027, 1, 1), previous.GetProperty("NextCheckAtUtc").GetDateTimeOffset());
+
+        _clock.Now = Local(2027, 1, 1);
+        var current = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(controller.GetStatus()).Value);
+        Assert.True(current.GetProperty("TabVisible").GetBoolean());
+        Assert.Equal(Local(2027, 1, 1), current.GetProperty("SeasonStartUtc").GetDateTimeOffset());
+        Assert.False(Directory.Exists(Path.Join(_directory, "jellyfin-watchback", "yearly-rewind", "reports")));
     }
 
     [Fact]

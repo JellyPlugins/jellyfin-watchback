@@ -67,6 +67,9 @@ public sealed class UserYearlyRewindController : ControllerBase
         {
             Enabled = enabled,
             TabVisible = visible,
+            SeasonStartUtc = enabled
+                ? YearlyRewindWindow.LatestSnapshotAt(now, config!.YearlyRewindStartDate, TimeZoneInfo.Local)
+                : (DateTimeOffset?)null,
             ServerTimeUtc = now,
             TimeZoneId = YearlyRewindWindow.ClientTimeZoneId(TimeZoneInfo.Local),
             NextCheckAtUtc = enabled

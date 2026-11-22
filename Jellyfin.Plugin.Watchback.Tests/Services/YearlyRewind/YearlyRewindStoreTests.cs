@@ -78,6 +78,22 @@ public sealed class YearlyRewindStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task OpenRead_DoesNotHoldTheStoreGateWhileTheResponseIsConsumed()
+    {
+        var store = new YearlyRewindStore(_directory);
+        var original = Snapshot(2026);
+        store.Publish(original);
+        using var response = store.OpenRead(_userId);
+        var next = Snapshot(2027);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var published = await Task.Run(() => store.Publish(next), cancellationToken).WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        Assert.True(published);
+        Assert.Equal(original.SnapshotId, JsonSerializer.Deserialize<YearlyRewindSnapshot>(response!, JsonDefaults.Options)!.SnapshotId);
+        using var current = store.OpenRead(_userId);
+        Assert.Equal(next.SnapshotId, JsonSerializer.Deserialize<YearlyRewindSnapshot>(current!, JsonDefaults.Options)!.SnapshotId);
+    }
+
+    [Fact]
     public void Load_IsolatesUsersAndKeepsReportAfterDisplaySeason()
     {
         var store = new YearlyRewindStore(_directory);

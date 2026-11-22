@@ -9,6 +9,8 @@
     var panel = null;
     var report = null;
     var missingReport = false;
+    var season = null;
+    var reportRevision = 0;
     var strings = {};
     var locale = 'en';
     var inFlight = null;
@@ -51,6 +53,8 @@
         inFlight = null;
         report = null;
         missingReport = false;
+        season = null;
+        reportRevision++;
         if (panel) panel.replaceChildren();
         panel = null;
         if (registered) window.WatchbackTabs?.unregister(TAB);
@@ -491,18 +495,19 @@
     }
     function load() {
         var epoch = generation;
+        var revision = reportRevision;
         if (report) { render(); return; }
         if (missingReport) { showMissing(); return; }
         if (panel) panel.replaceChildren(node('p', text('loading')));
         loadFailed = false;
         if (!inFlight) {
             var pending = Promise.resolve(request('/Watchback/YearlyRewind/My')).then(function (data) {
-                if (!valid(epoch)) return;
+                if (!valid(epoch) || revision !== reportRevision) return;
                 report = data;
                 window.WatchbackTabs?.updateTitle?.(TAB, tabTitle());
                 render();
             }, function (error) {
-                if (!valid(epoch)) return;
+                if (!valid(epoch) || revision !== reportRevision) return;
                 if (error?.status === 401 || error?.status === 403) { clear(); return; }
                 if (error?.status === 404) { missingReport = true; showMissing(); return; }
                 loadFailed = true;
@@ -527,13 +532,30 @@
             if (!value(status, 'Enabled') || !value(status, 'TabVisible')) {
                 clear(); return;
             }
+            var nextSeason = value(status, 'SeasonStartUtc') || null;
+            if (season !== nextSeason) {
+                season = nextSeason;
+                reportRevision++;
+                report = null;
+                missingReport = false;
+                loadFailed = false;
+                inFlight = null;
+                if (panel) panel.replaceChildren();
+                // A sleeping browser may miss the entire hidden interval between years.
+                if (panel?.classList.contains('is-active')) load();
+            }
             if (!registered && window.WatchbackTabs) {
                 registered = true;
                 window.WatchbackTabs.register(TAB, tabTitle(), function (root) { panel = root; }, 'history', function (root) { panel = root; load(); });
             } else {
                 window.WatchbackTabs?.updateTitle?.(TAB, tabTitle());
             }
-        }, function () { if (valid(epoch)) clear(); }).finally(function () {
+        }, function (error) {
+            if (!valid(epoch)) return;
+            if (error?.status === 401 || error?.status === 403) { clear(); return; }
+            // Retry discovery failures without discarding an already displayed report.
+            nextDelay = 60000;
+        }).finally(function () {
             if (!disposed && session === owner && same(owner, readSession())) {
                 refreshing = null;
                 if (timer) clearTimeout(timer);

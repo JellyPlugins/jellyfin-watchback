@@ -8,6 +8,7 @@ let root: HTMLElement;
 let enabled = true;
 let visible = true;
 let id = 'snapshot-a';
+let season = '2026-12-15T00:00:00Z';
 let user = 'a';
 let api: any;
 let extra: Record<string, any> = {};
@@ -23,12 +24,13 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 beforeEach(() => {
  vi.useFakeTimers();
  enabled = true; visible = true; id = 'snapshot-a'; user = 'a'; extra = {};
+ season = '2026-12-15T00:00:00Z';
  root = document.createElement('section'); document.body.replaceChildren(root);
  document.documentElement.lang = 'en';
  delete (window as any).WatchbackRewind;
  (window as any).WatchbackTabs = { register: vi.fn((_id, _title, callback, _icon, activate) => { mount = activate; callback(root); activate(root); }), unregister: vi.fn(), updateTitle: vi.fn() };
  api = { getCurrentUserId: () => user, accessToken: () => user ? 'token-' + user : '', serverAddress: () => 'https://test.example', getUrl: (path: string) => { if (!path) throw new Error('Url name cannot be empty'); return path; },
- ajax: vi.fn(({ url }) => Promise.resolve(url.startsWith('/Items/') ? {Id: '12345678123412341234123456781234'} : url.includes('Translations') ? {} : url.includes('Status') ? { Enabled: enabled, TabVisible: visible, TimeZoneId: 'UTC' } : report())) };
+ ajax: vi.fn(({ url }) => Promise.resolve(url.startsWith('/Items/') ? {Id: '12345678123412341234123456781234'} : url.includes('Translations') ? {} : url.includes('Status') ? { Enabled: enabled, TabVisible: visible, SeasonStartUtc: season, TimeZoneId: 'UTC' } : report())) };
  (globalThis as any).ApiClient = api;
 });
 afterEach(() => { (window as any).WatchbackRewind?.dispose(); delete (window as any).WatchbackRewind; vi.useRealTimers(); });
@@ -118,6 +120,102 @@ test('only the seasonal boundary schedules another configuration request', async
  await vi.advanceTimersByTimeAsync(86340000); await flush();
  expect((window as any).WatchbackTabs.unregister).toHaveBeenCalledWith('yearly-rewind');
  expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(1);
+});
+
+test('failed discovery retries automatically and stops retrying after recovery', async () => {
+ let attempts = 0;
+ const fallback = api.ajax.getMockImplementation();
+ api.ajax.mockImplementation(args => args.url.includes('Status') && ++attempts <= 2 ? Promise.reject({status: 503}) : fallback(args));
+ loadYearlyRewindBundle(); await flush();
+ expect((window as any).WatchbackTabs.register).not.toHaveBeenCalled();
+ await vi.advanceTimersByTimeAsync(59999); await flush();
+ expect(attempts).toBe(1);
+ await vi.advanceTimersByTimeAsync(60001); await flush();
+ expect(attempts).toBe(3);
+ expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2026');
+ await vi.advanceTimersByTimeAsync(120000); await flush();
+ expect(attempts).toBe(3);
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(1);
+});
+
+test('transient discovery failures keep a displayed report and retry only discovery', async () => {
+ const fallback = api.ajax.getMockImplementation();
+ loadYearlyRewindBundle(); await flush();
+ api.ajax.mockImplementation(args => args.url.includes('Status') ? Promise.reject({status: 503}) : fallback(args));
+ document.dispatchEvent(new Event('jfw:navigation')); await flush();
+ expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2026');
+ expect((window as any).WatchbackTabs.unregister).not.toHaveBeenCalled();
+ api.ajax.mockImplementation(fallback);
+ await vi.advanceTimersByTimeAsync(60000); await flush();
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.includes('Status'))).toHaveLength(3);
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(1);
+});
+
+test.each([401, 403])('discovery authentication failure clears the tab without retrying (%s)', async status => {
+ const fallback = api.ajax.getMockImplementation();
+ loadYearlyRewindBundle(); await flush();
+ api.ajax.mockImplementation(args => args.url.includes('Status') ? Promise.reject({status}) : fallback(args));
+ document.dispatchEvent(new Event('jfw:navigation')); await flush();
+ expect(root.childNodes).toHaveLength(0);
+ await vi.advanceTimersByTimeAsync(120000); await flush();
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.includes('Status'))).toHaveLength(2);
+});
+
+test.each(['loaded', 'missing'])('same-user season changes invalidate cached %s reports without a hidden interval', async state => {
+ const fallback = api.ajax.getMockImplementation();
+ root.classList.add('is-active');
+ api.ajax.mockImplementation(args => state === 'missing' && args.url.endsWith('/My') ? Promise.reject({status: 404}) : fallback(args));
+ loadYearlyRewindBundle(); await flush();
+ api.ajax.mockImplementation(fallback);
+ season = '2027-12-15T00:00:00Z'; id = 'snapshot-b';
+ document.dispatchEvent(new Event('visibilitychange')); await flush();
+ expect(user).toBe('a');
+ expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2027');
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(2);
+});
+
+test.each(['old-first', 'new-first'])('same-user season changes reject late report responses (%s)', async order => {
+ const pending: Array<{data: any; resolve: (data: any) => void}> = [];
+ const fallback = api.ajax.getMockImplementation();
+ root.classList.add('is-active');
+ api.ajax.mockImplementation(args => args.url.endsWith('/My') ? new Promise(resolve => pending.push({data: report(), resolve})) : fallback(args));
+ loadYearlyRewindBundle(); await flush();
+ season = '2027-12-15T00:00:00Z'; id = 'snapshot-b';
+ document.dispatchEvent(new Event('visibilitychange')); await flush();
+ expect(user).toBe('a');
+ expect(pending).toHaveLength(2);
+ if (order === 'old-first') {
+  pending[0].resolve(pending[0].data); await flush();
+  expect(root.querySelector('h2')).toBeNull();
+ }
+ pending[1].resolve(pending[1].data); await flush();
+ if (order === 'new-first') { pending[0].resolve(pending[0].data); await flush(); }
+ expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2027');
+ expect(root.textContent).not.toContain('Your year in review 2026');
+});
+
+test.each([404, 401])('late previous-season errors cannot hide or invalidate the new report (%s)', async status => {
+ let reject!: (error: unknown) => void;
+ const fallback = api.ajax.getMockImplementation();
+ root.classList.add('is-active');
+ api.ajax.mockImplementation(args => args.url.endsWith('/My') ? new Promise((_resolve, fail) => { reject = fail; }) : fallback(args));
+ loadYearlyRewindBundle(); await flush();
+ api.ajax.mockImplementation(fallback);
+ season = '2027-12-15T00:00:00Z'; id = 'snapshot-b';
+ document.dispatchEvent(new Event('visibilitychange')); await flush();
+ reject({status}); await flush();
+ expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2027');
+ expect((window as any).WatchbackTabs.unregister).not.toHaveBeenCalled();
+});
+
+test('an inactive tab defers the new season report until activation', async () => {
+ loadYearlyRewindBundle(); await flush();
+ season = '2027-12-15T00:00:00Z'; id = 'snapshot-b';
+ document.dispatchEvent(new Event('visibilitychange')); await flush();
+ expect(root.querySelector('h2')).toBeNull();
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(1);
+ mount(root); await flush();
+ expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2027');
 });
 
 test('logout clears immediately and rejects a late response from the previous user', async () => {
