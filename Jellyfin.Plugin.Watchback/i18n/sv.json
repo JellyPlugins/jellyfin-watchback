@@ -20,6 +20,7 @@
   "rewind.title": "Din årsöversikt",
   "rewind.tabTitle": "Årsöversikt",
   "rewind.loading": "Laddar din tillbakablick…",
+  "rewind.missing": "Det finns ingen årsrapport för din användare.",
   "rewind.unavailable": "Din tillbakablick är inte tillgänglig ännu.",
   "rewind.retry": "Försök igen",
   "rewind.partial": "Denna tillbakablick omfattar endast perioder med registrerade uppspelningar.",

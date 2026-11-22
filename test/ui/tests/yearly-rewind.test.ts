@@ -9,7 +9,6 @@ let enabled = true;
 let visible = true;
 let id = 'snapshot-a';
 let user = 'a';
-let available = true;
 let api: any;
 let extra: Record<string, any> = {};
 const snapshotAt = () => id === 'snapshot-b' ? '2027-12-15T00:00:00Z' : '2026-12-15T00:00:00Z';
@@ -23,13 +22,13 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 
 beforeEach(() => {
  vi.useFakeTimers();
- enabled = true; visible = true; available = true; id = 'snapshot-a'; user = 'a'; extra = {};
+ enabled = true; visible = true; id = 'snapshot-a'; user = 'a'; extra = {};
  root = document.createElement('section'); document.body.replaceChildren(root);
  document.documentElement.lang = 'en';
  delete (window as any).WatchbackRewind;
- (window as any).WatchbackTabs = { register: vi.fn((_id, _title, callback) => { mount = callback; callback(root); }), unregister: vi.fn(), updateTitle: vi.fn() };
+ (window as any).WatchbackTabs = { register: vi.fn((_id, _title, callback, _icon, activate) => { mount = activate; callback(root); activate(root); }), unregister: vi.fn(), updateTitle: vi.fn() };
  api = { getCurrentUserId: () => user, accessToken: () => user ? 'token-' + user : '', serverAddress: () => 'https://test.example', getUrl: (path: string) => { if (!path) throw new Error('Url name cannot be empty'); return path; },
- ajax: vi.fn(({ url }) => Promise.resolve(url.startsWith('/Items/') ? {Id: '12345678123412341234123456781234'} : url.includes('Translations') ? {} : url.includes('Status') ? { Enabled: enabled, TabVisible: visible, Available: available, SnapshotId: id, SnapshotAtUtc: snapshotAt(), TimeZoneId: 'UTC' } : report())) };
+ ajax: vi.fn(({ url }) => Promise.resolve(url.startsWith('/Items/') ? {Id: '12345678123412341234123456781234'} : url.includes('Translations') ? {} : url.includes('Status') ? { Enabled: enabled, TabVisible: visible, TimeZoneId: 'UTC' } : report())) };
  (globalThis as any).ApiClient = api;
 });
 afterEach(() => { (window as any).WatchbackRewind?.dispose(); delete (window as any).WatchbackRewind; vi.useRealTimers(); });
@@ -51,35 +50,79 @@ test('renders frozen numbers and months without top-title lists or title lookups
  expect(root.querySelector('.jfw-rewind-heading .jfw-rewind-period')?.textContent).toBe('(12/15/2025 – 12/14/2026)');
  expect(root.textContent).not.toContain('Your first title');
  expect(root.textContent).not.toContain('Your most active period');
- expect((window as any).WatchbackTabs.register.mock.calls[0][1]).toBe('Year in review 2026');
+ expect((window as any).WatchbackTabs.updateTitle).toHaveBeenCalledWith('yearly-rewind', 'Year in review 2026');
  expect(root.querySelector('img')).toBeNull();
 });
 
-test('periodic availability probes reuse the snapshot and hide the tab without deleting data', async () => {
+test('navigation and elapsed time reuse the frozen report without polling its availability', async () => {
  loadYearlyRewindBundle(); await flush();
- await vi.advanceTimersByTimeAsync(60000); await flush();
+ await vi.advanceTimersByTimeAsync(120000); await flush();
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.includes('Status'))).toHaveLength(1);
+ document.dispatchEvent(new Event('jfw:navigation')); await flush();
+ mount(root); await flush();
  expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(1);
  visible = false;
- await vi.advanceTimersByTimeAsync(60000); await flush();
+ document.dispatchEvent(new Event('jfw:navigation')); await flush();
  expect((window as any).WatchbackTabs.unregister).toHaveBeenCalledWith('yearly-rewind');
  expect(root.childNodes).toHaveLength(0);
- expect(api.ajax.mock.calls.every(([args]) => args.type === 'GET')).toBe(true);
 });
 
-test('new annual snapshot is loaded but a disabled feature is never mounted', async () => {
+test('disabled feature does not mount and an open report stays frozen until the next season', async () => {
  enabled = false; loadYearlyRewindBundle(); await flush();
  expect((window as any).WatchbackTabs.register).not.toHaveBeenCalled();
- enabled = true; await vi.advanceTimersByTimeAsync(60000); await flush();
- id = 'snapshot-b'; await vi.advanceTimersByTimeAsync(60000); await flush();
- expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(2);
- expect((window as any).WatchbackTabs.updateTitle).toHaveBeenCalledWith('yearly-rewind', 'Year in review 2027');
+ enabled = true;
+ document.dispatchEvent(new Event('jfw:navigation')); await flush();
+ id = 'snapshot-b';
+ document.dispatchEvent(new Event('jfw:navigation')); await flush();
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(1);
+ expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2026');
+ visible = false; document.dispatchEvent(new Event('jfw:navigation')); await flush();
+ visible = true; document.dispatchEvent(new Event('jfw:navigation')); await flush();
  expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2027');
- expect(root.querySelector('.jfw-rewind-period')?.textContent).toBe('(12/15/2026 – 12/14/2027)');
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(2);
+});
+
+test('mounting the tab does not fetch a report until the user activates it', async () => {
+ let activate!: (panel: HTMLElement) => void;
+ (window as any).WatchbackTabs.register.mockImplementation((_id, _title, callback, _icon, onActivate) => {
+  callback(root); activate = onActivate;
+ });
+ loadYearlyRewindBundle(); await flush();
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(0);
+ activate(root); await flush();
+ expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2026');
+});
+
+test('missing files leave the tab visible and display a localized user-specific message', async () => {
+ const fallback = api.ajax.getMockImplementation();
+ api.ajax.mockImplementation(args => args.url.endsWith('/My') ? Promise.reject({status: 404})
+  : args.url.includes('lang=de') ? Promise.resolve({'rewind.missing': 'Für deinen Benutzer ist kein Jahresrückblick vorhanden.'}) : fallback(args));
+ loadYearlyRewindBundle(); await flush();
+ expect((window as any).WatchbackTabs.register).toHaveBeenCalled();
+ expect(root.textContent).toContain('No year-in-review report exists for your user.');
+ document.documentElement.lang = 'de'; await flush();
+ expect(root.textContent).toBe('Für deinen Benutzer ist kein Jahresrückblick vorhanden.');
+ mount(root); document.dispatchEvent(new Event('jfw:navigation')); await flush();
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(1);
+ expect(root.querySelector('button')).toBeNull();
+});
+
+test('only the seasonal boundary schedules another configuration request', async () => {
+ const fallback = api.ajax.getMockImplementation();
+ api.ajax.mockImplementation(args => args.url.includes('Status') ? Promise.resolve({Enabled: true, TabVisible: visible,
+  ServerTimeUtc: '2026-12-15T00:00:00Z', NextCheckAtUtc: '2026-12-16T00:00:00Z'}) : fallback(args));
+ loadYearlyRewindBundle(); await flush();
+ await vi.advanceTimersByTimeAsync(60000); await flush();
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.includes('Status'))).toHaveLength(1);
+ visible = false;
+ await vi.advanceTimersByTimeAsync(86340000); await flush();
+ expect((window as any).WatchbackTabs.unregister).toHaveBeenCalledWith('yearly-rewind');
+ expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(1);
 });
 
 test('logout clears immediately and rejects a late response from the previous user', async () => {
  let resolve: (value: unknown) => void;
- api.ajax.mockImplementation(({url}) => url.endsWith('/My') ? new Promise(done => { resolve = done; }) : Promise.resolve(url.includes('Status') ? {Enabled: true, TabVisible: true, Available: true} : {}));
+ api.ajax.mockImplementation(({url}) => url.endsWith('/My') ? new Promise(done => { resolve = done; }) : Promise.resolve(url.includes('Status') ? {Enabled: true, TabVisible: true} : {}));
  loadYearlyRewindBundle(); await flush();
  document.dispatchEvent(new Event('jfw:session-changing')); user = '';
  resolve!(report()); await flush();
@@ -88,7 +131,7 @@ test('logout clears immediately and rejects a late response from the previous us
 
 test('handles missing history and retries errors without unsafe markup', async () => {
  let fail = true;
- api.ajax.mockImplementation(({url}) => url.endsWith('/My') ? fail ? Promise.reject({status: 503}) : Promise.resolve({...report(), DataState: 'NotCollected'}) : Promise.resolve(url.includes('Status') ? {Enabled: true, TabVisible: true, Available: true} : {}));
+ api.ajax.mockImplementation(({url}) => url.endsWith('/My') ? fail ? Promise.reject({status: 503}) : Promise.resolve({...report(), DataState: 'NotCollected'}) : Promise.resolve(url.includes('Status') ? {Enabled: true, TabVisible: true} : {}));
  loadYearlyRewindBundle(); await flush();
  expect(root.textContent).toContain('Try again'); fail = false;
  root.querySelector('button')!.click(); await flush();
@@ -110,7 +153,7 @@ test('uses the translated German heading and tab title with the snapshot year', 
  api.ajax.mockImplementation(args => args.url.includes('Translations') ? Promise.resolve({'rewind.title': 'Dein Jahresrückblick', 'rewind.tabTitle': 'Jahresrückblick'}) : fallback(args));
  loadYearlyRewindBundle(); await flush();
  expect(root.querySelector('h2')?.textContent).toBe('Dein Jahresrückblick 2026 (15.12.2025 – 14.12.2026)');
- expect((window as any).WatchbackTabs.register.mock.calls[0][1]).toBe('Jahresrückblick 2026');
+ expect((window as any).WatchbackTabs.updateTitle).toHaveBeenCalledWith('yearly-rewind', 'Jahresrückblick 2026');
 });
 
 test('updates the tab and report when Jellyfin applies the user language after startup', async () => {
@@ -253,13 +296,14 @@ test('unknown reconstructed duration stays unavailable instead of showing zero h
 });
 
 
-test.each(['old-first', 'new-first'])('superseded pending snapshots never replace the current report (%s)', async order => {
+test.each(['old-first', 'new-first'])('late reports from the previous user never replace the current report (%s)', async order => {
  const pending: Array<{data: any; resolve: (data: any) => void}> = [];
  const fallback = api.ajax.getMockImplementation();
  api.ajax.mockImplementation(args => args.url.endsWith('/My') ? new Promise(resolve => pending.push({data: report(), resolve})) : fallback(args));
  loadYearlyRewindBundle(); await flush();
  expect(pending).toHaveLength(1);
- id = 'snapshot-b'; await vi.advanceTimersByTimeAsync(60000); await flush();
+ document.dispatchEvent(new Event('jfw:session-changing')); user = 'b'; id = 'snapshot-b';
+ document.dispatchEvent(new Event('jfw:session-changed')); await flush();
  expect(pending).toHaveLength(2);
  if (order === 'old-first') {
   pending[0].resolve(pending[0].data); await flush();
@@ -271,12 +315,13 @@ test.each(['old-first', 'new-first'])('superseded pending snapshots never replac
  expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(2);
 });
 
-test('unchanged status accepts the outstanding matching snapshot without duplicate loads', async () => {
+test('an outstanding report request is not duplicated by navigation', async () => {
  let resolve!: (value: any) => void;
  const fallback = api.ajax.getMockImplementation();
  api.ajax.mockImplementation(args => args.url.endsWith('/My') ? new Promise(done => {resolve = done;}) : fallback(args));
  loadYearlyRewindBundle(); await flush();
- await vi.advanceTimersByTimeAsync(60000); await flush();
+ document.dispatchEvent(new Event('jfw:navigation')); await flush();
+ mount(root); await flush();
  resolve(report()); await flush();
  expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2026');
  expect(api.ajax.mock.calls.filter(([args]) => args.url.endsWith('/My'))).toHaveLength(1);
@@ -299,7 +344,7 @@ test('identifies imported Playback Reporting history and keeps old reports reada
  loadYearlyRewindBundle(); await flush();
  expect(root.textContent).toContain('Historical plays imported from Playback Reporting: 12.');
  expect(root.textContent).toContain('Includes 1 titles reconstructed from Jellyfin data.');
- extra = {}; id = 'snapshot-b';
+ extra = {}; id = 'snapshot-b'; user = 'b';
  document.dispatchEvent(new Event('jfw:session-changed')); await flush();
  expect(root.querySelector('h2')?.textContent).toContain('Your year in review 2027');
  expect(root.textContent).not.toContain('Historical plays imported');

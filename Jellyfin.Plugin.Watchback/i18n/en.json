@@ -20,6 +20,7 @@
   "rewind.title": "Your year in review",
   "rewind.tabTitle": "Year in review",
   "rewind.loading": "Loading your rewind…",
+  "rewind.missing": "No year-in-review report exists for your user.",
   "rewind.unavailable": "Your rewind is not available yet.",
   "rewind.retry": "Try again",
   "rewind.partial": "This rewind includes only the periods for which playback was recorded.",

@@ -18,8 +18,8 @@ for (const language of ['en', 'de', 'zh']) {
       Insights: {HourlySeconds: Array.from({length:24}, (_, hour) => hour === 20 ? 5400 : hour === 9 ? 1800 : 0), WeekdaySeconds: [0,0,0,0,5400,1800,0], LongestStreakDays:2, LongestStreakStart:'2026-10-02', LongestStreakEnd:'2026-10-03'},
       Comparison: {PeriodStartUtc:'2024-12-15T00:00:00Z',SnapshotAtUtc:'2025-12-15T00:00:00Z',TimeZoneId:'UTC',DataState:'Ready',ActiveSeconds:3600,MovieCount:2,EpisodeCount:0,SeriesCount:0,ActiveDays:12,Genres:['Drama','Adventure'],TopGenre:'Drama'}};
     (window as any).ApiClient = {getCurrentUserId: () => 'a', accessToken: () => 'token', serverAddress: () => 'server', getUrl: (path: string) => path,
-      ajax: ({url}: {url: string}) => Promise.resolve(url.includes('Translations') ? strings : url.includes('Status') ? {Enabled: true, TabVisible: true, Available: true, SnapshotId: 'fixed'} : report)};
-    (window as any).WatchbackTabs = {register: (_id: string, _title: string, mount: (root: HTMLElement) => void) => mount(document.getElementById('report')!), unregister: () => {}};
+      ajax: ({url}: {url: string}) => Promise.resolve(url.includes('Translations') ? strings : url.includes('Status') ? {Enabled: true, TabVisible: true} : report)};
+    (window as any).WatchbackTabs = {register: (_id: string, _title: string, mount: (root: HTMLElement) => void, _icon: string, activate: (root: HTMLElement) => void) => { mount(document.getElementById('report')!); activate(document.getElementById('report')!); }, unregister: () => {}};
    }, {language, strings});
    await page.addScriptTag({content: script});
    await expect(page.locator('.jfw-rewind-stat')).toHaveCount(5);
@@ -66,8 +66,8 @@ for (const width of [390, 1440]) {
     Months: [{StartUtc: '2025-12-15T00:00:00Z', EndUtc: '2026-01-15T00:00:00Z', ActiveSeconds: 3600, EstimatedSeconds: 3600}],
     Insights: {HourlySeconds: Array(24).fill(0), WeekdaySeconds: Array(7).fill(0), LongestStreakDays: 0}};
    (window as any).ApiClient = {getCurrentUserId: () => 'a', accessToken: () => 'token', serverAddress: () => 'server', getUrl: (path: string) => path,
-    ajax: ({url}: {url: string}) => Promise.resolve(url.includes('Translations') ? strings : url.includes('Status') ? {Enabled: true, TabVisible: true, Available: true, SnapshotId: 'reconstructed'} : report)};
-   (window as any).WatchbackTabs = {register: (_id: string, _title: string, mount: (root: HTMLElement) => void) => mount(document.getElementById('report')!), unregister: () => {}};
+    ajax: ({url}: {url: string}) => Promise.resolve(url.includes('Translations') ? strings : url.includes('Status') ? {Enabled: true, TabVisible: true} : report)};
+   (window as any).WatchbackTabs = {register: (_id: string, _title: string, mount: (root: HTMLElement) => void, _icon: string, activate: (root: HTMLElement) => void) => { mount(document.getElementById('report')!); activate(document.getElementById('report')!); }, unregister: () => {}};
   }, strings);
   await page.addScriptTag({content: script});
   await expect(page.locator('.jfw-rewind-notice').first()).toHaveText(strings['rewind.reconstructed'].replace('{count}', '1'));

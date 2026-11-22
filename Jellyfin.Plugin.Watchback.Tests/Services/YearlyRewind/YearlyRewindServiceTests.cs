@@ -10,6 +10,7 @@ using Jellyfin.Plugin.Watchback.Services.Activity;
 using Jellyfin.Plugin.Watchback.Services.ConfigAccess;
 using Jellyfin.Plugin.Watchback.Services.YearlyRewind;
 using MediaBrowser.Common.Configuration;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.AspNetCore.Http;
@@ -43,6 +44,7 @@ public sealed class YearlyRewindServiceTests : IDisposable
         _configuration.Setup(config => config.GetConfiguration()).Returns(_config);
         _users.Setup(users => users.GetUsers()).Returns([_user]);
         _users.Setup(users => users.GetUserById(_user.Id)).Returns(_user);
+        _library.Setup(library => library.GetItemList(It.IsAny<InternalItemsQuery>())).Returns([]);
         _service = new YearlyRewindService(_configuration.Object, paths.Object, NullLogger<YearlyRewindService>.Instance);
         _source.Setup(service => service.BuildActivityReport()).Returns(() => new UserActivityResult());
         _history = new UserActivityHistoryService(_configuration.Object, _sessions.Object, _users.Object, _library.Object,
@@ -60,7 +62,7 @@ public sealed class YearlyRewindServiceTests : IDisposable
 
     private UserYearlyRewindController Controller(bool authenticated = true)
     {
-        var controller = new UserYearlyRewindController(_service, _configuration.Object, _users.Object, _library.Object,
+        var controller = new UserYearlyRewindController(_service, _configuration.Object, _users.Object,
             _clock, NullLogger<UserYearlyRewindController>.Instance);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         if (authenticated) controller.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("Jellyfin-UserId", _user.Id.ToString())], "test"));
@@ -110,7 +112,7 @@ public sealed class YearlyRewindServiceTests : IDisposable
         _history.Tick(Local(2026, 12, 15));
         _clock.Now = Local(2027, 1, 16);
         var original = _service.Load(_user.Id)!;
-        Assert.IsType<OkObjectResult>(controller.GetMyRewind());
+        using var response = Assert.IsType<FileStreamResult>(controller.GetMyRewind()).FileStream;
         Assert.Equal("private, no-store", controller.Response.Headers.CacheControl);
         _history.Tick(_clock.Now);
         Assert.Equal(original.SnapshotId, _service.Load(_user.Id)!.SnapshotId);
@@ -268,28 +270,31 @@ public sealed class YearlyRewindServiceTests : IDisposable
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public void StatusDistinguishesDisabledMissingAndAvailableReports(bool enabled, bool stored)
+    public void StatusUsesOnlyConfigurationRegardlessOfReportPresence(bool enabled, bool stored)
     {
         _clock.Now = Local(2026, 12, 15);
-        YearlyRewindSnapshot? snapshot = stored ? StoredMovieReport() : null;
+        if (stored) StoredMovieReport();
         _config.YearlyRewindEnabled = enabled;
         var controller = Controller();
         var status = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(controller.GetStatus()).Value);
         Assert.Equal(enabled, status.GetProperty("Enabled").GetBoolean());
         Assert.Equal(enabled, status.GetProperty("TabVisible").GetBoolean());
-        Assert.Equal(enabled && stored, status.GetProperty("Available").GetBoolean());
+        Assert.False(status.TryGetProperty("Available", out _));
+        Assert.False(status.TryGetProperty("SnapshotId", out _));
         Assert.Equal("private, no-store", controller.Response.Headers.CacheControl);
-        if (enabled && stored)
+        if (!enabled)
         {
-            Assert.Equal(snapshot!.SnapshotId, status.GetProperty("SnapshotId").GetGuid());
-            Assert.Equal(snapshot.SnapshotAtUtc, status.GetProperty("SnapshotAtUtc").GetDateTimeOffset());
-            Assert.Equal("Ready", status.GetProperty("DataState").GetString());
-            Assert.Equal(snapshot.SnapshotId, Assert.IsType<YearlyRewindSnapshot>(Assert.IsType<OkObjectResult>(controller.GetMyRewind()).Value).SnapshotId);
+            Assert.IsType<ForbidResult>(controller.GetMyRewind());
+        }
+        else if (!stored)
+        {
+            Assert.IsType<NotFoundResult>(controller.GetMyRewind());
         }
         else
         {
-            Assert.Equal(JsonValueKind.Null, status.GetProperty("SnapshotId").ValueKind);
-            Assert.Equal("Unavailable", status.GetProperty("DataState").GetString());
+            using var stream = Assert.IsType<FileStreamResult>(controller.GetMyRewind()).FileStream;
+            var served = JsonSerializer.Deserialize<YearlyRewindSnapshot>(stream, JsonDefaults.Options)!;
+            Assert.Equal(_user.Id, served.UserId);
         }
     }
 
@@ -302,33 +307,121 @@ public sealed class YearlyRewindServiceTests : IDisposable
         Assert.IsType<ForbidResult>(controller.GetMyRewind());
         var status = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(controller.GetStatus()).Value);
         Assert.False(status.GetProperty("Enabled").GetBoolean());
-        Assert.Equal(_clock.Now.AddMinutes(1), status.GetProperty("NextCheckAtUtc").GetDateTimeOffset());
+        Assert.Equal(JsonValueKind.Null, status.GetProperty("NextCheckAtUtc").ValueKind);
         Assert.Equal(original.SnapshotId, _service.Load(_user.Id)!.SnapshotId);
     }
 
     [Fact]
-    public void FailedPermissionLookupReturnsUnavailableWithoutChangingTheReport()
+    public void LibraryFailureDoesNotAffectServingAFrozenReport()
     {
         var original = StoredMovieReport();
-        _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Throws(new IOException("Library temporarily unavailable"));
+        _library.Setup(library => library.GetItemList(It.IsAny<InternalItemsQuery>())).Throws(new IOException("Library unavailable"));
+        _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Throws(new IOException("Library unavailable"));
         var controller = Controller();
-        Assert.Equal(503, Assert.IsType<StatusCodeResult>(controller.GetStatus()).StatusCode);
-        Assert.Equal(503, Assert.IsType<StatusCodeResult>(controller.GetMyRewind()).StatusCode);
-        Assert.Equal(original.SnapshotId, _service.Load(_user.Id)!.SnapshotId);
+        Assert.IsType<OkObjectResult>(controller.GetStatus());
+        using var stream = Assert.IsType<FileStreamResult>(controller.GetMyRewind()).FileStream;
+        var served = JsonSerializer.Deserialize<YearlyRewindSnapshot>(stream, JsonDefaults.Options)!;
+        Assert.Equal(original.SnapshotId, served.SnapshotId);
+        _library.Verify(library => library.GetItemList(It.IsAny<InternalItemsQuery>()), Times.Never);
+        _library.Verify(library => library.GetItemById(It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public void LargeReportIsStreamedUnchangedWithoutLibraryLookups()
+    {
+        var original = StoredMovieReport();
+        var snapshot = original with
+        {
+            SnapshotAtUtc = original.SnapshotAtUtc.AddYears(1),
+            GeneratedAtUtc = original.GeneratedAtUtc.AddYears(1),
+            Items = new(Enumerable.Range(0, 600).Select(index => new YearlyRewindItem
+            {
+                ItemId = Guid.NewGuid(), ItemType = "Movie", Name = "Movie " + index, ActiveSeconds = 3600, PlayCount = 1
+            }).ToList())
+        };
+        new YearlyRewindStore(Path.Join(_directory, "jellyfin-watchback")).Publish(snapshot);
+        using var stream = Assert.IsType<FileStreamResult>(Controller().GetMyRewind()).FileStream;
+        using var reader = new StreamReader(stream);
+        var path = Path.Join(_directory, "jellyfin-watchback", "yearly-rewind", "reports", _user.Id.ToString("N") + ".json");
+        Assert.Equal(File.ReadAllText(path), reader.ReadToEnd());
+        _library.Verify(library => library.GetItemList(It.IsAny<InternalItemsQuery>()), Times.Never);
+        _library.Verify(library => library.GetItemById(It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StoredReportCanBeReadWhileTheNextReportCollectsHistory()
+    {
+        var original = StoredMovieReport();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        using var collecting = new ManualResetEventSlim();
+        using var resume = new ManualResetEventSlim();
+        var publication = Task.Run(() => ((IUserActivityHistoryConsumer)_service).Tick(Local(2027, 12, 15), [_user], _ =>
+        {
+            collecting.Set();
+            if (!resume.Wait(TimeSpan.FromSeconds(10), cancellationToken)) throw new TimeoutException("History collection was not released.");
+            return new UserActivityHistory();
+        }, true, true), cancellationToken);
+
+        try
+        {
+            Assert.True(collecting.Wait(TimeSpan.FromSeconds(5), cancellationToken));
+            using var stream = await Task.Run(() => _service.OpenReport(_user.Id), cancellationToken).WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+            Assert.NotNull(stream);
+            var report = JsonSerializer.Deserialize<YearlyRewindSnapshot>(stream, JsonDefaults.Options)!;
+            Assert.Equal(original.SnapshotId, report.SnapshotId);
+        }
+        finally
+        {
+            resume.Set();
+            await publication;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ChangedVideoOrMusicPermissionsDoNotChangeAFrozenReport(bool music)
+    {
+        var original = StoredMovieReport();
+        var snapshot = original with { SnapshotAtUtc = original.SnapshotAtUtc.AddYears(1), GeneratedAtUtc = original.GeneratedAtUtc.AddYears(1) };
+        if (music)
+        {
+            snapshot = snapshot with
+            {
+                Items = [],
+                Music = snapshot with { Items = new(original.Items.Select(item => item with { ItemType = "Audio" }).ToList()) }
+            };
+        }
+
+        new YearlyRewindStore(Path.Join(_directory, "jellyfin-watchback")).Publish(snapshot);
+        var hidden = new Mock<BaseItem>();
+        hidden.Setup(item => item.IsVisible(_user, false)).Returns(false);
+        _library.Setup(library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.ItemIds.Contains(original.Items[0].ItemId))))
+            .Returns([hidden.Object]);
+        var controller = Controller();
+
+        using var stream = Assert.IsType<FileStreamResult>(controller.GetMyRewind()).FileStream;
+        var served = JsonSerializer.Deserialize<YearlyRewindSnapshot>(stream, JsonDefaults.Options)!;
+        Assert.Equal(snapshot.SnapshotId, served.SnapshotId);
+        Assert.IsType<OkObjectResult>(controller.GetStatus());
+        _library.Verify(library => library.GetItemList(It.IsAny<InternalItemsQuery>()), Times.Never);
+        hidden.Verify(item => item.IsVisible(It.IsAny<User>(), It.IsAny<bool>()), Times.Never);
     }
 
     [Theory]
     [InlineData("json")]
     [InlineData("foreign")]
-    public void UnreadableOrForeignReportsAreNotRebuiltOrExposed(string corruption)
+    public void StoredFileIsServedWithoutRequestTimeParsingOrValidation(string corruption)
     {
         var original = StoredMovieReport();
         var path = Path.Join(_directory, "jellyfin-watchback", "yearly-rewind", "reports", _user.Id.ToString("N") + ".json");
         var content = corruption == "foreign" ? JsonSerializer.Serialize(original with { UserId = Guid.NewGuid() }, JsonDefaults.Options) : "not JSON";
         File.WriteAllText(path, content);
         var controller = Controller();
-        Assert.Equal(503, Assert.IsType<StatusCodeResult>(controller.GetStatus()).StatusCode);
-        Assert.Equal(503, Assert.IsType<StatusCodeResult>(controller.GetMyRewind()).StatusCode);
+        Assert.IsType<OkObjectResult>(controller.GetStatus());
+        using var stream = Assert.IsType<FileStreamResult>(controller.GetMyRewind()).FileStream;
+        using var reader = new StreamReader(stream);
+        Assert.Equal(content, reader.ReadToEnd());
         Assert.Equal(content, File.ReadAllText(path));
     }
 

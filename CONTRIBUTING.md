@@ -65,6 +65,8 @@ The demo loads the production CSS, translations and browser scripts with an in-m
 
 Keep raw observations separate from annual derived reports. Preserve UTC journal timestamps, server-local annual boundaries, frozen snapshots, private caller identity, estimated-data labels and atomic writes. A bad user journal must not prevent recording other users.
 
+The personal report endpoint streams the caller's published JSON file unchanged. Keep aggregation and schema validation on the publication path; do not add current-library lookups or report parsing to serving or tab discovery. The status endpoint reads only configuration and calendar boundaries. Report files are loaded when the tab is activated, with a distinct message for HTTP 404; the client does not poll report availability or rebuild frozen facts.
+
 Use `scripts/bump-version.ps1` to update version metadata, and `scripts/collect-release-notes.ps1` to collect release notes. Do not add local startup state, auth fixtures, generated assets, build outputs or IDE settings.
 
 ## GitHub repository setup

@@ -43,11 +43,13 @@ public sealed class YearlyRewindService : IUserActivityHistoryConsumer
 
     internal YearlyRewindSnapshot? Load(Guid userId)
     {
-        lock (_gate)
-        {
-            return _reports.Load(userId);
-        }
+        // The store synchronizes reads with publication. Readers must not wait for
+        // history collection and aggregation for every user under the service gate.
+        return _reports.Load(userId);
     }
+
+    // Serving a report never joins the collection/aggregation gate or parses the snapshot.
+    internal FileStream? OpenReport(Guid userId) => _reports.OpenRead(userId);
 
     bool IUserActivityHistoryConsumer.NeedsCurrentState(DateTimeOffset now, IReadOnlyCollection<User> users)
     {

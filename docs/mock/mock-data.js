@@ -79,12 +79,12 @@ window.ApiClient = {
       return fetch('i18n/' + language + '.json').then(function (response) { if (!response.ok) throw new Error('Unsupported demo language');
         return response.json(); });
     }
-    if (options.url.includes('/Status')) return Promise.resolve({Enabled:true,TabVisible:true,Available:true,SnapshotId:MOCK_YEARLY_REWIND.SnapshotId,SnapshotAtUtc:MOCK_YEARLY_REWIND.SnapshotAtUtc,TimeZoneId:'UTC'});
+    if (options.url.includes('/Status')) return Promise.resolve({Enabled:true,TabVisible:true});
     return Promise.resolve(structuredClone(MOCK_YEARLY_REWIND));
   }
 };
 window.WatchbackTabs = {
-  register: function (_id, title, mount) { var report=document.getElementById('demoReport');report.setAttribute('aria-label',title);mount(report); },
+  register: function (_id, title, mount, _icon, activate) { var report=document.getElementById('demoReport');report.setAttribute('aria-label',title);mount(report);activate(report); },
   unregister: function () { document.getElementById('demoReport').replaceChildren(); },
   updateTitle: function (_id, title) { document.getElementById('demoReport').setAttribute('aria-label',title); }
 };

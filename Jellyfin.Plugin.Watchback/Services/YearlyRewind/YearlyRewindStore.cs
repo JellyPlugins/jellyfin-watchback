@@ -34,6 +34,25 @@ internal sealed class YearlyRewindStore
         }
     }
 
+    internal FileStream? OpenRead(Guid userId)
+    {
+        ValidateUserId(userId);
+        try
+        {
+            // Publication replaces files atomically. An open response keeps its original
+            // bytes while a new annual report can replace the directory entry.
+            return new FileStream(GetPath(userId), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        }
+        catch (FileNotFoundException)
+        {
+            return null;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Publishes a new annual snapshot without replacing the same or a later cycle.</summary>
     /// <param name="snapshot">The completed snapshot to publish.</param>
     /// <returns>True when a later snapshot was published; false for repeated or older triggers.</returns>

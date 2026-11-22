@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Jellyfin.Plugin.Watchback.Services;
 using Jellyfin.Plugin.Watchback.Services.YearlyRewind;
 using Xunit;
 
@@ -37,6 +38,32 @@ public sealed class YearlyRewindStoreTests : IDisposable
         Assert.Equal("映画", Assert.Single(restored.Items).Name);
         Assert.Equal(123, Assert.Single(restored.Items).ActiveSeconds);
         Assert.Single(Directory.GetFiles(_directory, "*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public void OpenRead_MissingReportDoesNotCreateFilesOrUseAnotherUsersReport()
+    {
+        var store = new YearlyRewindStore(_directory);
+        Assert.Null(store.OpenRead(_userId));
+        Assert.False(Directory.Exists(_directory));
+        store.Publish(Snapshot(2026));
+        Assert.Null(store.OpenRead(Guid.NewGuid()));
+        using var stream = store.OpenRead(_userId);
+        Assert.NotNull(stream);
+    }
+
+    [Fact]
+    public void OpenRead_AnnualReplacementKeepsAnOpenResponseOnItsOriginalSnapshot()
+    {
+        var store = new YearlyRewindStore(_directory);
+        var original = Snapshot(2026);
+        store.Publish(original);
+        using var first = store.OpenRead(_userId);
+        var next = Snapshot(2027);
+        Assert.True(store.Publish(next));
+        using var second = store.OpenRead(_userId);
+        Assert.Equal(original.SnapshotId, JsonSerializer.Deserialize<YearlyRewindSnapshot>(first!, JsonDefaults.Options)!.SnapshotId);
+        Assert.Equal(next.SnapshotId, JsonSerializer.Deserialize<YearlyRewindSnapshot>(second!, JsonDefaults.Options)!.SnapshotId);
     }
 
     [Fact]

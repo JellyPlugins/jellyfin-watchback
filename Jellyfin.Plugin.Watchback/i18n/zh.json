@@ -20,6 +20,7 @@
   "rewind.title": "你的年度回顾",
   "rewind.tabTitle": "年度回顾",
   "rewind.loading": "正在加载年度回顾…",
+  "rewind.missing": "你的用户尚无年度回顾报告。",
   "rewind.unavailable": "你的年度回顾尚不可用。",
   "rewind.retry": "重试",
   "rewind.partial": "本回顾仅包含已记录播放的时间段。",

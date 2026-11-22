@@ -20,6 +20,7 @@
   "rewind.title": "Tu resumen del año",
   "rewind.tabTitle": "Resumen del año",
   "rewind.loading": "Cargando tu resumen…",
+  "rewind.missing": "No hay ningún resumen anual para tu usuario.",
   "rewind.unavailable": "Tu resumen aún no está disponible.",
   "rewind.retry": "Reintentar",
   "rewind.partial": "Este resumen solo incluye los períodos con reproducciones registradas.",

@@ -8,14 +8,13 @@
     var registered = false;
     var panel = null;
     var report = null;
-    var expectedSnapshotId = null;
-    var reportRevision = 0;
+    var missingReport = false;
     var strings = {};
     var locale = 'en';
     var inFlight = null;
     var disposed = false;
     var refreshing = null;
-    var currentStatus = null;
+    var loadFailed = false;
     var requestedLanguage = null;
     var languageRevision = 0;
 
@@ -45,14 +44,13 @@
         if (timer) clearTimeout(timer);
         timer = null;
         refreshing = null;
-        currentStatus = null;
+        loadFailed = false;
         requestedLanguage = null;
         languageRevision++;
         strings = {};
         inFlight = null;
         report = null;
-        expectedSnapshotId = null;
-        reportRevision++;
+        missingReport = false;
         if (panel) panel.replaceChildren();
         panel = null;
         if (registered) window.WatchbackTabs?.unregister(TAB);
@@ -488,19 +486,26 @@
         var retry = node('button', text('retry'), 'emby-button');
         retry.type = 'button'; retry.addEventListener('click', load); panel.append(retry);
     }
+    function showMissing() {
+        if (panel) panel.replaceChildren(node('p', text('missing')));
+    }
     function load() {
         var epoch = generation;
-        var revision = reportRevision;
-        var expected = expectedSnapshotId;
         if (report) { render(); return; }
+        if (missingReport) { showMissing(); return; }
         if (panel) panel.replaceChildren(node('p', text('loading')));
+        loadFailed = false;
         if (!inFlight) {
             var pending = Promise.resolve(request('/Watchback/YearlyRewind/My')).then(function (data) {
-                if (!valid(epoch) || revision !== reportRevision || (expected && value(data, 'SnapshotId') !== expected)) return;
-                report = data; render();
+                if (!valid(epoch)) return;
+                report = data;
+                window.WatchbackTabs?.updateTitle?.(TAB, tabTitle());
+                render();
             }, function (error) {
-                if (!valid(epoch) || revision !== reportRevision) return;
+                if (!valid(epoch)) return;
                 if (error?.status === 401 || error?.status === 403) { clear(); return; }
+                if (error?.status === 404) { missingReport = true; showMissing(); return; }
+                loadFailed = true;
                 showError();
             }).finally(function () { if (inFlight === pending) inFlight = null; });
             inFlight = pending;
@@ -514,41 +519,30 @@
         if (refreshing) return;
         var epoch = generation;
         var owner = session;
-        var nextDelay = 60000;
+        var nextDelay = null;
         refreshing = Promise.resolve(request('/Watchback/YearlyRewind/My/Status')).then(function (status) {
             if (!valid(epoch)) return;
-            currentStatus = status;
             var boundary = new Date(value(status, 'NextCheckAtUtc')).getTime() - new Date(value(status, 'ServerTimeUtc')).getTime();
-            if (Number.isFinite(boundary)) nextDelay = Math.max(1000, Math.min(60000, boundary));
+            if (Number.isFinite(boundary) && boundary > 0) nextDelay = Math.max(1000, Math.min(2147483647, boundary));
             if (!value(status, 'Enabled') || !value(status, 'TabVisible')) {
                 clear(); return;
             }
-            var nextSnapshotId = value(status, 'SnapshotId') || null;
-            if (expectedSnapshotId !== nextSnapshotId) { expectedSnapshotId = nextSnapshotId; report = null; inFlight = null; reportRevision++; }
-            if (!value(status, 'Available')) {
-                report = null;
-                inFlight = null;
-                reportRevision++;
-                if (panel) panel.replaceChildren(node('p', text('unavailable')));
-                return;
-            }
             if (!registered && window.WatchbackTabs) {
                 registered = true;
-                window.WatchbackTabs.register(TAB, tabTitle(), function (root) { panel = root; load(); }, 'history', function (root) { panel = root; load(); });
+                window.WatchbackTabs.register(TAB, tabTitle(), function (root) { panel = root; }, 'history', function (root) { panel = root; load(); });
             } else {
                 window.WatchbackTabs?.updateTitle?.(TAB, tabTitle());
-                if (panel && !report) load();
             }
         }, function () { if (valid(epoch)) clear(); }).finally(function () {
             if (!disposed && session === owner && same(owner, readSession())) {
                 refreshing = null;
                 if (timer) clearTimeout(timer);
-                timer = setTimeout(probe, nextDelay);
+                timer = nextDelay === null ? null : setTimeout(probe, nextDelay);
             }
         });
     }
     function tabTitle() {
-        return text('tabTitle') + ' ' + year(value(currentStatus, 'SnapshotAtUtc') || value(currentStatus, 'ServerTimeUtc') || Date.now(), value(currentStatus, 'TimeZoneId'));
+        return text('tabTitle') + (report ? ' ' + year(value(report, 'SnapshotAtUtc'), value(report, 'TimeZoneId')) : '');
     }
     function refreshLanguage() {
         if (!session || disposed) return;
@@ -566,8 +560,8 @@
             if (report) render();
             else if (panel) {
                 if (inFlight) panel.replaceChildren(node('p', text('loading')));
-                else if (!value(currentStatus, 'Available')) panel.replaceChildren(node('p', text('unavailable')));
-                else showError();
+                else if (missingReport) showMissing();
+                else if (loadFailed) showError();
             }
         }, function () { if (valid(epoch) && revision === languageRevision) requestedLanguage = null; });
     }
@@ -587,7 +581,7 @@
         musicMedia: "Music",
         genreInfoToggle: "Information about genre counting",
         genreInfo: "The full playback time counts toward every genre assigned to a title. The sum of genre times can therefore exceed actual playback time. Percentages refer to the sum of genre times.",
-        title: 'Your year in review', tabTitle: 'Year in review', loading: 'Loading your rewind…', unavailable: 'Your rewind is not available yet.', retry: 'Try again',
+        title: 'Your year in review', tabTitle: 'Year in review', loading: 'Loading your rewind…', missing: 'No year-in-review report exists for your user.', unavailable: 'Your rewind is not available yet.', retry: 'Try again',
         partial: 'This rewind includes only the periods for which playback was recorded.', notCollected: 'Playback was not recorded before this rewind’s cutoff.',
         empty: 'No qualifying playback was recorded.', hourUnit: 'h', hourUnitLong: 'hours', hours: 'Hours watched', movies: 'Films', episodes: 'Episodes', series: 'Series', activeDays: 'Active days',
         topGenres: 'Your film / series genres', months: 'Your viewing year',
