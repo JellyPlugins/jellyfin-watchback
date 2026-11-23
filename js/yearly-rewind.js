@@ -8,14 +8,15 @@
     var registered = false;
     var panel = null;
     var report = null;
-    var expectedSnapshotId = null;
+    var missingReport = false;
+    var season = null;
     var reportRevision = 0;
     var strings = {};
     var locale = 'en';
     var inFlight = null;
     var disposed = false;
     var refreshing = null;
-    var currentStatus = null;
+    var loadFailed = false;
     var requestedLanguage = null;
     var languageRevision = 0;
 
@@ -45,13 +46,14 @@
         if (timer) clearTimeout(timer);
         timer = null;
         refreshing = null;
-        currentStatus = null;
+        loadFailed = false;
         requestedLanguage = null;
         languageRevision++;
         strings = {};
         inFlight = null;
         report = null;
-        expectedSnapshotId = null;
+        missingReport = false;
+        season = null;
         reportRevision++;
         if (panel) panel.replaceChildren();
         panel = null;
@@ -60,6 +62,13 @@
     }
     function reconstructedCount() {
         return value(report, 'ReconstructedItemCount') || (value(report, 'Items') || []).filter(function (item) { return value(item, 'HasReconstructedActivity'); }).length;
+    }
+    function recordedImportSeconds(source) {
+        return value(source, 'PlaybackReportingSeconds') ?? (value(source, 'Items') || []).reduce(function (sum, item) { return sum + (value(item, 'PlaybackReportingSeconds') || 0); }, 0);
+    }
+    function hasUnmeasuredActivity(source) {
+        return !!(value(source, 'ReconstructedItemCount') || value(source, 'PlaybackReportingPlayCount') || recordedImportSeconds(source)
+            || (value(source, 'Items') || []).some(function (item) { return value(item, 'HasReconstructedActivity') || value(item, 'PlaybackReportingPlayCount'); }));
     }
     function hasMeasuredPlayback() {
         return (value(value(report, 'Insights'), 'HourlySeconds') || []).some(function (amount) { return amount > 0; });
@@ -201,12 +210,12 @@
     function mediaStreakDays(source) {
         if (!source) return value(report, 'FullTimePerGenre') ? 0 : null;
         var insights = value(source, 'Insights');
-        var onlyEstimates = value(source, 'ReconstructedItemCount') && !(value(insights, 'HourlySeconds') || []).some(function (amount) { return amount > 0; });
+        var onlyEstimates = hasUnmeasuredActivity(source) && !(value(insights, 'HourlySeconds') || []).some(function (amount) { return amount > 0; });
         if (insights && !onlyEstimates) return value(insights, 'LongestStreakDays');
         return null;
     }
     function renderStreakSummary(root, combined, video, days, estimatedOnly) {
-        if (estimatedOnly) root.append(node('p', text('noMeasuredInsights'), 'jfw-rewind-secondary'));
+        if (estimatedOnly) root.append(node('p', text(recordedImportSeconds(report) + recordedImportSeconds(value(report, 'Music')) > 0 ? 'importedInsights' : 'noMeasuredInsights'), 'jfw-rewind-secondary'));
         else if (days === null || days === undefined) root.append(node('p', text('insightsMissing'), 'jfw-rewind-secondary'));
         else {
             root.append(node('p', number(days) + ' ' + text(new Intl.PluralRules(locale).select(days) === 'one' ? 'daySingular' : 'dayPlural'), 'jfw-rewind-streak-length'));
@@ -222,7 +231,7 @@
         var hasMusic = (value(music, 'Items') || []).length > 0;
         var combined = value(report, 'ActivityStreak');
         var measured = hasMeasuredPlayback() || (value(musicInsights, 'HourlySeconds') || []).some(function (amount) { return amount > 0; });
-        var estimatedOnly = (reconstructedCount() || value(music, 'ReconstructedItemCount')) && !measured;
+        var estimatedOnly = (hasUnmeasuredActivity(report) || hasUnmeasuredActivity(music)) && !measured;
         var days = null;
         if (combined) days = value(combined, 'Days');
         else if (!hasMusic && video) days = value(video, 'LongestStreakDays');
@@ -244,11 +253,12 @@
         var streak = section(grid, text('streak'), 'jfw-rewind-streak');
         var insights = value(report, 'Insights');
         renderStreak(streak);
-        if (!insights) { patterns.append(node('p', text('insightsMissing'), 'jfw-rewind-secondary')); panel.append(grid); return; }
-        if (reconstructedCount() && !hasMeasuredPlayback()) {
-            patterns.append(node('p', text('noMeasuredInsights'), 'jfw-rewind-secondary'));
+        if (!insights) { patterns.append(node('p', text(recordedImportSeconds(report) > 0 ? 'importedInsights' : 'insightsMissing'), 'jfw-rewind-secondary')); panel.append(grid); return; }
+        if (hasUnmeasuredActivity(report) && !hasMeasuredPlayback()) {
+            patterns.append(node('p', text(recordedImportSeconds(report) > 0 ? 'importedInsights' : 'noMeasuredInsights'), 'jfw-rewind-secondary'));
             panel.append(grid); return;
         }
+        if (recordedImportSeconds(report) > 0) patterns.append(node('p', text('importedInsights'), 'jfw-rewind-secondary'));
         var hours = value(insights, 'HourlySeconds') || [];
         var weekdays = value(insights, 'WeekdaySeconds') || [];
         if (!hours.some(function (amount) { return amount > 0; })) patterns.append(node('p', text('empty')));
@@ -268,7 +278,9 @@
     }
     function previousActiveDays(previous) {
         if (!previous) return null;
-        if (value(previous, 'ReconstructedItemCount') && (value(previous, 'ActiveSeconds') || 0) <= (value(previous, 'EstimatedSeconds') || 0)) return null;
+        var activeSeconds = value(previous, 'ActiveSeconds') || 0;
+        var tolerance = Math.max(0.001, activeSeconds * 1e-10);
+        if (hasUnmeasuredActivity(previous) && activeSeconds <= (value(previous, 'EstimatedSeconds') || 0) + recordedImportSeconds(previous) + tolerance) return null;
         return value(previous, 'ActiveDays') || 0;
     }
     function videoComparisonMetrics(items, series, previous) {
@@ -279,7 +291,7 @@
             ['movies', items.filter(function (item) { return value(item, 'ItemType') === 'Movie'; }).length, previous ? value(previous, 'MovieCount') || 0 : null, 0],
             ['episodes', items.filter(function (item) { return value(item, 'ItemType') === 'Episode'; }).length, previous ? value(previous, 'EpisodeCount') || 0 : null, 0],
             ['series', series.size, previous ? value(previous, 'SeriesCount') || 0 : null, 0],
-            ['activeDays', reconstructedCount() && !hasMeasuredPlayback() ? null : value(report, 'ActiveDays') || 0, previousActiveDays(previous), 0]
+            ['activeDays', hasUnmeasuredActivity(report) && !hasMeasuredPlayback() ? null : value(report, 'ActiveDays') || 0, previousActiveDays(previous), 0]
         ];
         if (value(report, 'DataState') === 'NotCollected') metrics.forEach(function (metric) { metric[1] = null; });
         return metrics;
@@ -313,7 +325,7 @@
         var metrics = videoComparisonMetrics(items, series, previous);
         appendMusicComparison(metrics, tracks, previousMusic, musicEstimated);
         metrics.forEach(function (metric) {
-            var row = node('tr'); var label = node('th', text(metric[0] === 'activeDays' && (reconstructedCount() || value(previous, 'ReconstructedItemCount')) ? 'measuredActiveDays' : metric[0])); label.scope = 'row';
+            var row = node('tr'); var label = node('th', text(metric[0] === 'activeDays' && (hasUnmeasuredActivity(report) || hasUnmeasuredActivity(previous)) ? 'measuredActiveDays' : metric[0])); label.scope = 'row';
             if (metric[1] === null || metric[2] === null) {
                 row.append(label, node('td', metric[1] === null ? '—' : number(metric[1], metric[3])), node('td', metric[2] === null ? '—' : number(metric[2], metric[3])), node('td', '—'));
                 rows.append(row);
@@ -346,7 +358,7 @@
         addStat(stats, number(movies.length), text('movies'), 'movie');
         addStat(stats, number(series.size), text('series'), 'tv');
         addStat(stats, number(episodes.length), text('episodes'), 'episodes');
-        addStat(stats, reconstructedCount() && !hasMeasuredPlayback() ? '—' : number(value(report, 'ActiveDays') || 0), text(reconstructedCount() ? 'measuredActiveDays' : 'activeDays'), 'activeDays');
+        addStat(stats, hasUnmeasuredActivity(report) && !hasMeasuredPlayback() ? '—' : number(value(report, 'ActiveDays') || 0), text(hasUnmeasuredActivity(report) ? 'measuredActiveDays' : 'activeDays'), 'activeDays');
         var music = value(report, 'Music');
         var tracks = value(music, 'Items') || [];
         if (tracks.length) {
@@ -488,19 +500,27 @@
         var retry = node('button', text('retry'), 'emby-button');
         retry.type = 'button'; retry.addEventListener('click', load); panel.append(retry);
     }
+    function showMissing() {
+        if (panel) panel.replaceChildren(node('p', text('missing')));
+    }
     function load() {
         var epoch = generation;
         var revision = reportRevision;
-        var expected = expectedSnapshotId;
         if (report) { render(); return; }
+        if (missingReport) { showMissing(); return; }
         if (panel) panel.replaceChildren(node('p', text('loading')));
+        loadFailed = false;
         if (!inFlight) {
             var pending = Promise.resolve(request('/Watchback/YearlyRewind/My')).then(function (data) {
-                if (!valid(epoch) || revision !== reportRevision || (expected && value(data, 'SnapshotId') !== expected)) return;
-                report = data; render();
+                if (!valid(epoch) || revision !== reportRevision) return;
+                report = data;
+                window.WatchbackTabs?.updateTitle?.(TAB, tabTitle());
+                render();
             }, function (error) {
                 if (!valid(epoch) || revision !== reportRevision) return;
                 if (error?.status === 401 || error?.status === 403) { clear(); return; }
+                if (error?.status === 404) { missingReport = true; showMissing(); return; }
+                loadFailed = true;
                 showError();
             }).finally(function () { if (inFlight === pending) inFlight = null; });
             inFlight = pending;
@@ -514,41 +534,47 @@
         if (refreshing) return;
         var epoch = generation;
         var owner = session;
-        var nextDelay = 60000;
+        var nextDelay = null;
         refreshing = Promise.resolve(request('/Watchback/YearlyRewind/My/Status')).then(function (status) {
             if (!valid(epoch)) return;
-            currentStatus = status;
             var boundary = new Date(value(status, 'NextCheckAtUtc')).getTime() - new Date(value(status, 'ServerTimeUtc')).getTime();
-            if (Number.isFinite(boundary)) nextDelay = Math.max(1000, Math.min(60000, boundary));
+            if (Number.isFinite(boundary) && boundary > 0) nextDelay = Math.max(1000, Math.min(2147483647, boundary));
             if (!value(status, 'Enabled') || !value(status, 'TabVisible')) {
                 clear(); return;
             }
-            var nextSnapshotId = value(status, 'SnapshotId') || null;
-            if (expectedSnapshotId !== nextSnapshotId) { expectedSnapshotId = nextSnapshotId; report = null; inFlight = null; reportRevision++; }
-            if (!value(status, 'Available')) {
-                report = null;
-                inFlight = null;
+            var nextSeason = value(status, 'SeasonStartUtc') || null;
+            if (season !== nextSeason) {
+                season = nextSeason;
                 reportRevision++;
-                if (panel) panel.replaceChildren(node('p', text('unavailable')));
-                return;
+                report = null;
+                missingReport = false;
+                loadFailed = false;
+                inFlight = null;
+                if (panel) panel.replaceChildren();
+                // A sleeping browser may miss the entire hidden interval between years.
+                if (panel?.classList.contains('is-active')) load();
             }
             if (!registered && window.WatchbackTabs) {
                 registered = true;
-                window.WatchbackTabs.register(TAB, tabTitle(), function (root) { panel = root; load(); }, 'history', function (root) { panel = root; load(); });
+                window.WatchbackTabs.register(TAB, tabTitle(), function (root) { panel = root; }, 'history', function (root) { panel = root; load(); });
             } else {
                 window.WatchbackTabs?.updateTitle?.(TAB, tabTitle());
-                if (panel && !report) load();
             }
-        }, function () { if (valid(epoch)) clear(); }).finally(function () {
+        }, function (error) {
+            if (!valid(epoch)) return;
+            if (error?.status === 401 || error?.status === 403) { clear(); return; }
+            // Retry discovery failures without discarding an already displayed report.
+            nextDelay = 60000;
+        }).finally(function () {
             if (!disposed && session === owner && same(owner, readSession())) {
                 refreshing = null;
                 if (timer) clearTimeout(timer);
-                timer = setTimeout(probe, nextDelay);
+                timer = nextDelay === null ? null : setTimeout(probe, nextDelay);
             }
         });
     }
     function tabTitle() {
-        return text('tabTitle') + ' ' + year(value(currentStatus, 'SnapshotAtUtc') || value(currentStatus, 'ServerTimeUtc') || Date.now(), value(currentStatus, 'TimeZoneId'));
+        return text('tabTitle') + (report ? ' ' + year(value(report, 'SnapshotAtUtc'), value(report, 'TimeZoneId')) : '');
     }
     function refreshLanguage() {
         if (!session || disposed) return;
@@ -566,8 +592,8 @@
             if (report) render();
             else if (panel) {
                 if (inFlight) panel.replaceChildren(node('p', text('loading')));
-                else if (!value(currentStatus, 'Available')) panel.replaceChildren(node('p', text('unavailable')));
-                else showError();
+                else if (missingReport) showMissing();
+                else if (loadFailed) showError();
             }
         }, function () { if (valid(epoch) && revision === languageRevision) requestedLanguage = null; });
     }
@@ -587,7 +613,7 @@
         musicMedia: "Music",
         genreInfoToggle: "Information about genre counting",
         genreInfo: "The full playback time counts toward every genre assigned to a title. The sum of genre times can therefore exceed actual playback time. Percentages refer to the sum of genre times.",
-        title: 'Your year in review', tabTitle: 'Year in review', loading: 'Loading your rewind…', unavailable: 'Your rewind is not available yet.', retry: 'Try again',
+        title: 'Your year in review', tabTitle: 'Year in review', loading: 'Loading your rewind…', missing: 'No year-in-review report exists for your user.', unavailable: 'Your rewind is not available yet.', retry: 'Try again',
         partial: 'This rewind includes only the periods for which playback was recorded.', notCollected: 'Playback was not recorded before this rewind’s cutoff.',
         empty: 'No qualifying playback was recorded.', hourUnit: 'h', hourUnitLong: 'hours', hours: 'Hours watched', movies: 'Films', episodes: 'Episodes', series: 'Series', activeDays: 'Active days',
         topGenres: 'Your film / series genres', months: 'Your viewing year',
@@ -630,7 +656,8 @@
         reconstructed: "Includes {count} titles reconstructed from Jellyfin data. Watch time may be estimated or unavailable. Viewing habits and active days use measured playback only.",
         measuredActiveDays: "Measured active days",
         noMeasuredInsights: "These details require measured playback. Only reconstructed activity is available for this period.",
-        measured: "Measured",
+        measured: "Recorded",
+        importedInsights: "Playback Reporting durations are recorded values. Viewing habits, active days and streaks use only activity intervals recorded by Watchback.",
         estimated: "Estimated",
         estimatedPart: "{hours} h estimated",
         comparisonEstimated: "At least one report includes reconstructed activity. Differences may include estimated values.",
