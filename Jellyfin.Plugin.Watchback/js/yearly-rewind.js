@@ -278,7 +278,9 @@
     }
     function previousActiveDays(previous) {
         if (!previous) return null;
-        if (hasUnmeasuredActivity(previous) && (value(previous, 'ActiveSeconds') || 0) <= (value(previous, 'EstimatedSeconds') || 0) + recordedImportSeconds(previous)) return null;
+        var activeSeconds = value(previous, 'ActiveSeconds') || 0;
+        var tolerance = Math.max(0.001, activeSeconds * 1e-10);
+        if (hasUnmeasuredActivity(previous) && activeSeconds <= (value(previous, 'EstimatedSeconds') || 0) + recordedImportSeconds(previous) + tolerance) return null;
         return value(previous, 'ActiveDays') || 0;
     }
     function videoComparisonMetrics(items, series, previous) {

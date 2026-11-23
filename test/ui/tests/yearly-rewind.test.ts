@@ -481,6 +481,13 @@ test('recorded Playback Reporting video durations render without estimates or in
  expect(Array.from(activity.querySelectorAll('td'), cell => cell.textContent)).toEqual(['—', '—', '—']);
 });
 
+test('previous-period rounding excess within tolerance keeps unmeasured active days unavailable', async () => {
+ extra = {Comparison: {...comparison(), ActiveSeconds: 7200.0005, EstimatedSeconds: 3600, PlaybackReportingSeconds: 3600, ReconstructedItemCount: 1, ActiveDays: 4}};
+ loadYearlyRewindBundle(); await flush();
+ const activity = root.querySelectorAll('.jfw-rewind-comparison tbody tr')[4];
+ expect(Array.from(activity.querySelectorAll('td'), cell => cell.textContent)).toEqual(['2', '—', '—']);
+});
+
 test('recorded imports and real Jellyfin estimates keep separate portions in the monthly chart', async () => {
  extra = {PlaybackReportingPlayCount: 1, PlaybackReportingSeconds: 3600, ReconstructedItemCount: 1, JellyfinReconstructedItemCount: 1,
   Items: [{ItemId: 'import', Name: 'Recorded film', ItemType: 'Movie', ActiveSeconds: 3600, PlaybackReportingSeconds: 3600, PlaybackReportingPlayCount: 1, Genres: []},

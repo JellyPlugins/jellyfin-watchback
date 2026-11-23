@@ -307,6 +307,26 @@ public sealed class YearlyRewindStoreTests : IDisposable
     }
 
     [Theory]
+    [InlineData(-1)]
+    [InlineData(3601)]
+    [InlineData(double.NaN)]
+    public void MonthlyDurationsAreValidatedEvenWhenGenresAreMissing(double reportedSeconds)
+    {
+        var store = new YearlyRewindStore(_directory);
+        var current = Snapshot(2026);
+        Assert.True(store.Publish(current));
+        var invalid = Snapshot(2027) with
+        {
+            Months = [new YearlyRewindMonth { ActiveSeconds = 3600, PlaybackReportingSeconds = reportedSeconds }]
+        };
+        Assert.Throws<InvalidDataException>(() => store.Publish(invalid));
+        Assert.Equal(current.SnapshotId, store.Load(_userId)!.SnapshotId);
+        var valid = Snapshot(2028) with { Months = [new YearlyRewindMonth { ActiveSeconds = 3600, PlaybackReportingSeconds = 3600 }] };
+        Assert.True(store.Publish(valid));
+        Assert.Equal(3600, store.Load(_userId)!.Months[0].PlaybackReportingSeconds);
+    }
+
+    [Theory]
     [InlineData("nested")]
     [InlineData("missing-items")]
     [InlineData("period-start")]

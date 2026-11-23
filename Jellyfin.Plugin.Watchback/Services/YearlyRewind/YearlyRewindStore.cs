@@ -208,18 +208,27 @@ internal sealed class YearlyRewindStore
     {
         foreach (var month in snapshot.Months ?? [])
         {
-            if (month?.Genres is not { } genres)
+            if (month is null)
+            {
+                continue;
+            }
+
+            var tolerance = Math.Max(0.001, month.ActiveSeconds * 1e-10);
+            if (!double.IsFinite(month.ActiveSeconds) || !double.IsFinite(month.EstimatedSeconds) || month.EstimatedSeconds < 0 || month.EstimatedSeconds > month.ActiveSeconds
+                || !double.IsFinite(month.PlaybackReportingSeconds) || month.PlaybackReportingSeconds < 0
+                || month.PlaybackReportingSeconds + month.EstimatedSeconds > month.ActiveSeconds + tolerance)
+            {
+                throw new InvalidDataException("The rewind snapshot contains invalid monthly durations.");
+            }
+
+            if (month.Genres is not { } genres)
             {
                 continue;
             }
 
             var genreSeconds = genres.Sum(genre => genre?.ActiveSeconds ?? 0);
-            var tolerance = Math.Max(0.001, month.ActiveSeconds * 1e-10);
             if (genres.Any(genre => genre is null || !double.IsFinite(genre.ActiveSeconds) || genre.ActiveSeconds < 0
                 || (genre.Name is not null && string.IsNullOrWhiteSpace(genre.Name)))
-                || !double.IsFinite(month.ActiveSeconds) || !double.IsFinite(month.EstimatedSeconds) || month.EstimatedSeconds < 0 || month.EstimatedSeconds > month.ActiveSeconds
-                || !double.IsFinite(month.PlaybackReportingSeconds) || month.PlaybackReportingSeconds < 0
-                || month.PlaybackReportingSeconds + month.EstimatedSeconds > month.ActiveSeconds + tolerance
                 || !double.IsFinite(genreSeconds)
                 || (snapshot.FullTimePerGenre
                     ? genreSeconds < month.ActiveSeconds - tolerance || genres.Any(genre => genre.ActiveSeconds > month.ActiveSeconds + tolerance)
