@@ -448,7 +448,7 @@ test('identifies imported Playback Reporting history and keeps old reports reada
  expect(root.textContent).not.toContain('Historical plays imported');
 });
 
-test.each([false, true])('import-only reports show the source notice without a Jellyfin reconstruction claim (explicit count: %s)', async explicitCount => {
+test.each([false, true])('legacy import-only reports retain their frozen estimates and source notice (explicit count: %s)', async explicitCount => {
  extra = {PlaybackReportingPlayCount: 1, ReconstructedItemCount: 1, DataState: 'Partial',
   Items: [{ItemId: 'import', Name: 'Imported film', ItemType: 'Movie', ActiveSeconds: 600, EstimatedSeconds: 600, HasReconstructedActivity: true, PlaybackReportingPlayCount: 1, Genres: []}],
   ...(explicitCount ? {JellyfinReconstructedItemCount: 0} : {})};
@@ -456,6 +456,64 @@ test.each([false, true])('import-only reports show the source notice without a J
  expect(root.textContent).toContain('Historical plays imported from Playback Reporting: 1.');
  expect(root.textContent).not.toContain('reconstructed from Jellyfin data');
  expect(root.querySelector('.jfw-rewind-stat')?.textContent).toContain('≈');
+});
+
+test('recorded Playback Reporting video durations render without estimates or invented activity details', async () => {
+ extra = {PlaybackReportingPlayCount: 2, PlaybackReportingSeconds: 3600, ReconstructedItemCount: 0, JellyfinReconstructedItemCount: 0,
+  DataState: 'Partial', ActiveDays: 0, Insights: {HourlySeconds: Array(24).fill(0), WeekdaySeconds: Array(7).fill(0), LongestStreakDays: 0},
+  Items: [{ItemId: 'import', Name: 'Recorded film', ItemType: 'Movie', ActiveSeconds: 3600, EstimatedSeconds: 0,
+   PlaybackReportingSeconds: 3600, PlaybackReportingPlayCount: 2, PlayCount: 2, HasReconstructedActivity: false, Genres: ['Drama']}],
+  Months: [{StartUtc: periodStart(), ActiveSeconds: 3600, EstimatedSeconds: 0, PlaybackReportingSeconds: 3600}],
+  Comparison: {...comparison(), ActiveSeconds: 3600, PlaybackReportingSeconds: 3600, EstimatedSeconds: 0, ReconstructedItemCount: 0, ActiveDays: 0}};
+ loadYearlyRewindBundle(); await flush();
+ expect(root.querySelector('.jfw-rewind-stat strong')?.textContent).toBe('1');
+ expect(root.textContent).not.toContain('≈');
+ expect(root.textContent).not.toContain('reconstructed from Jellyfin data');
+ expect(root.textContent).toContain('Historical plays imported from Playback Reporting: 2.');
+ expect(root.querySelector('.jfw-rewind-estimated-bar')).toBeNull();
+ expect(root.querySelector('.jfw-rewind-month')?.getAttribute('aria-label')).toBe('December 2025: 1 h');
+ expect(root.querySelectorAll('.jfw-rewind-stat strong')[4].textContent).toBe('—');
+ expect(root.querySelector('.jfw-rewind-patterns')?.textContent).toContain('Playback Reporting durations are recorded values.');
+ expect(root.querySelector('.jfw-rewind-streak-length')).toBeNull();
+ expect(root.querySelector('.jfw-rewind-streak')?.textContent).toContain('Playback Reporting durations are recorded values.');
+ expect(root.querySelector('.jfw-rewind-comparison')?.textContent).not.toContain('Differences may include estimated values');
+ const activity = root.querySelectorAll('.jfw-rewind-comparison tbody tr')[4];
+ expect(Array.from(activity.querySelectorAll('td'), cell => cell.textContent)).toEqual(['—', '—', '—']);
+});
+
+test('previous-period rounding excess within tolerance keeps unmeasured active days unavailable', async () => {
+ extra = {Comparison: {...comparison(), ActiveSeconds: 7200.0005, EstimatedSeconds: 3600, PlaybackReportingSeconds: 3600, ReconstructedItemCount: 1, ActiveDays: 4}};
+ loadYearlyRewindBundle(); await flush();
+ const activity = root.querySelectorAll('.jfw-rewind-comparison tbody tr')[4];
+ expect(Array.from(activity.querySelectorAll('td'), cell => cell.textContent)).toEqual(['2', '—', '—']);
+});
+
+test('recorded imports and real Jellyfin estimates keep separate portions in the monthly chart', async () => {
+ extra = {PlaybackReportingPlayCount: 1, PlaybackReportingSeconds: 3600, ReconstructedItemCount: 1, JellyfinReconstructedItemCount: 1,
+  Items: [{ItemId: 'import', Name: 'Recorded film', ItemType: 'Movie', ActiveSeconds: 3600, PlaybackReportingSeconds: 3600, PlaybackReportingPlayCount: 1, Genres: []},
+   {ItemId: 'fallback', Name: 'Estimated film', ItemType: 'Movie', ActiveSeconds: 7200, EstimatedSeconds: 7200, HasReconstructedActivity: true, Genres: []}],
+  Months: [{StartUtc: periodStart(), ActiveSeconds: 10800, EstimatedSeconds: 7200, PlaybackReportingSeconds: 3600}]};
+ loadYearlyRewindBundle(); await flush();
+ expect(root.querySelector('.jfw-rewind-stat strong')?.textContent).toBe('≈ 3');
+ expect(root.querySelector('.jfw-rewind-month')?.getAttribute('aria-label')).toBe('December 2025: 3 h (2 h estimated)');
+ expect(root.querySelector('.jfw-rewind-time-legend')?.textContent).toContain('Recorded');
+ expect(root.querySelector('.jfw-rewind-time-legend')?.textContent).toContain('Estimated');
+ expect(root.textContent).toContain('Includes 1 titles reconstructed from Jellyfin data.');
+});
+
+test('recorded music imports display exact listening hours and tracks without reconstructed warnings', async () => {
+ extra = {Music: {DataState: 'Ready', PlaybackReportingPlayCount: 3, PlaybackReportingSeconds: 1800, ReconstructedItemCount: 0,
+  Insights: {HourlySeconds: Array(24).fill(0), WeekdaySeconds: Array(7).fill(0), LongestStreakDays: 0},
+  Items: [{ItemId: 'track', Name: 'Recorded track', ItemType: 'Audio', ActiveSeconds: 1800, PlaybackReportingSeconds: 1800, EstimatedSeconds: 0,
+   HasReconstructedActivity: false, PlaybackReportingPlayCount: 3, PlayCount: 3, Genres: ['Jazz']}],
+  Months: [{StartUtc: periodStart(), ActiveSeconds: 1800, PlaybackReportingSeconds: 1800, EstimatedSeconds: 0}]}};
+ loadYearlyRewindBundle(); await flush();
+ expect(root.querySelectorAll('.jfw-rewind-stat strong')[5].textContent).toBe('0.5');
+ expect(root.querySelector('.jfw-rewind-track-duration')?.textContent).toBe('0.5 h');
+ expect(root.querySelector('.jfw-rewind-top-tracks')?.textContent).not.toContain('reconstructed music activity');
+ expect(root.querySelector('.jfw-rewind-music-months .jfw-rewind-estimated-bar')).toBeNull();
+ expect(root.querySelector('.jfw-rewind-streak-music strong')?.textContent).toBe('—');
+ expect(root.textContent).not.toContain('≈');
 });
 
 test('mixed plays of one title retain both source notices', async () => {

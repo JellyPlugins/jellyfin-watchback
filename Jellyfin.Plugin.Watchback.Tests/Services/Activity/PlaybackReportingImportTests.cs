@@ -139,7 +139,9 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var track = Assert.Single(music.Items);
         Assert.Equal(2, track.PlayCount);
         Assert.Equal(1200, track.ActiveSeconds);
-        Assert.Equal(1200, track.EstimatedSeconds);
+        Assert.Equal(0, track.EstimatedSeconds);
+        Assert.Equal(1200, track.PlaybackReportingSeconds);
+        Assert.False(track.HasReconstructedActivity);
         Assert.Equal(2400, music.Months.SelectMany(month => month.Genres!).Sum(genre => genre.ActiveSeconds));
         var reports = new YearlyRewindStore(_directory);
         Assert.True(reports.Publish(report));
@@ -166,7 +168,12 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var report = Build(loaded);
         Assert.Equal("Partial", report.DataState);
         Assert.Equal(1200, Assert.Single(report.Items).ActiveSeconds);
-        Assert.Equal(1200, report.Items[0].EstimatedSeconds);
+        Assert.Equal(0, report.Items[0].EstimatedSeconds);
+        Assert.Equal(1200, report.Items[0].PlaybackReportingSeconds);
+        Assert.Equal(1200, report.PlaybackReportingSeconds);
+        Assert.Equal(0, report.ReconstructedItemCount);
+        Assert.Equal(0, report.Months.Sum(month => month.EstimatedSeconds));
+        Assert.Equal(1200, report.Months.Sum(month => month.PlaybackReportingSeconds));
         Assert.Equal(1, report.Items[0].PlayCount);
         Assert.Equal(1, report.PlaybackReportingPlayCount);
         Assert.Equal(0, report.JellyfinReconstructedItemCount);
@@ -181,49 +188,6 @@ public sealed class PlaybackReportingImportTests : IDisposable
     }
 
     [Fact]
-    public void SeparateJellyfinPlayOfAnImportedTitleRetainsItsCountDurationAndNotice()
-    {
-        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
-        var entry = new PlaybackReportingReader.Entry("import", _userId, _itemId, "Movie", "Movie", _cutoff.AddMonths(-10), 600);
-        history.Import(entry, Item(), _cutoff);
-        history.Record(Item(), new UserItemActivity { UserId = _userId, Played = true, PlayCount = 1, LastPlayedDate = entry.StartedAtUtc.AddMilliseconds(250).UtcDateTime }, _cutoff.AddDays(-1), _cutoff.AddDays(-1));
-        history.Record(Item(), new UserItemActivity { UserId = _userId, Played = true, PlayCount = 2, LastPlayedDate = _cutoff.AddMonths(-3).UtcDateTime }, _cutoff, _cutoff);
-        var report = Build(history);
-        var item = Assert.Single(report.Items);
-        Assert.Equal(4200, item.ActiveSeconds);
-        Assert.Equal(4200, item.EstimatedSeconds);
-        Assert.Equal(2, item.PlayCount);
-        Assert.Equal(1, report.PlaybackReportingPlayCount);
-        Assert.Equal(1, report.JellyfinReconstructedItemCount);
-        Assert.Equal(4200, report.Months.Sum(month => month.EstimatedSeconds));
-    }
-
-    [Theory]
-    [InlineData(-6, false)]
-    [InlineData(-5, true)]
-    [InlineData(-0.125, true)]
-    [InlineData(0, true)]
-    [InlineData(0.125, true)]
-    [InlineData(5, true)]
-    [InlineData(6, false)]
-    [InlineData(600, false)]
-    public void IndependentPlaybackStartTimestampsAreCorrelatedWithoutDroppingSeparatePlays(double offsetSeconds, bool samePlayback)
-    {
-        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
-        var entry = new PlaybackReportingReader.Entry("import", _userId, _itemId, "Movie", "Movie", _cutoff.AddMonths(-3), 600);
-        history.Import(entry, Item(), _cutoff);
-        history.Record(Item(), new UserItemActivity { UserId = _userId, Played = true, PlayCount = 1,
-            LastPlayedDate = entry.StartedAtUtc.AddSeconds(offsetSeconds).UtcDateTime }, _cutoff, _cutoff);
-        var report = Build(history);
-        var item = Assert.Single(report.Items);
-        Assert.Equal(samePlayback ? 1 : 2, item.PlayCount);
-        Assert.Equal(samePlayback ? 600 : 4200, item.ActiveSeconds);
-        Assert.Equal(item.ActiveSeconds, item.EstimatedSeconds);
-        Assert.Equal(item.ActiveSeconds, report.Months.Sum(month => month.EstimatedSeconds));
-        Assert.Equal(samePlayback ? 0 : 1, report.JellyfinReconstructedItemCount);
-    }
-
-    [Fact]
     public void MatchingTheLatestObservationDoesNotReviveAnOlderEstimate()
     {
         var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
@@ -234,6 +198,72 @@ public sealed class PlaybackReportingImportTests : IDisposable
         var item = Assert.Single(Build(history).Items);
         Assert.Equal(1, item.PlayCount);
         Assert.Equal(600, item.ActiveSeconds);
+    }
+
+    [Theory]
+    [InlineData(-600)]
+    [InlineData(-6)]
+    [InlineData(0)]
+    [InlineData(6)]
+    [InlineData(600)]
+    [InlineData(86400)]
+    public void RecordedPlaybackTakesPrecedenceRegardlessOfJellyfinLastPlayedTimestamp(double offsetSeconds)
+    {
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
+        var entry = new PlaybackReportingReader.Entry("recorded", _userId, _itemId, "Movie", "Movie", _cutoff.AddMonths(-3), 600);
+        history.Import(entry, Item(), _cutoff);
+        history.Record(Item(), new UserItemActivity { UserId = _userId, Played = true, PlayCount = 100,
+            LastPlayedDate = entry.StartedAtUtc.AddSeconds(offsetSeconds).UtcDateTime }, _cutoff, _cutoff);
+        var report = Build(history);
+        var item = Assert.Single(report.Items);
+        Assert.Equal(600, item.ActiveSeconds);
+        Assert.Equal(600, item.PlaybackReportingSeconds);
+        Assert.Equal(0, item.EstimatedSeconds);
+        Assert.False(item.HasReconstructedActivity);
+        Assert.False(item.HasJellyfinReconstructedActivity);
+        Assert.Equal(1, item.PlayCount);
+        Assert.Equal(0, report.JellyfinReconstructedItemCount);
+    }
+
+    [Fact]
+    public void RepeatedRecordedPlaysDoNotAcquireAnExtraRuntimeEstimateFromLifetimeState()
+    {
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
+        var entry = new PlaybackReportingReader.Entry("first", _userId, _itemId, "Movie", "Movie", _cutoff.AddMonths(-10), 600);
+        history.Import(entry, Item(), _cutoff);
+        history.Import(entry with { SourceKey = "second", StartedAtUtc = _cutoff.AddMonths(-3), ActiveSeconds = 1200 }, Item(), _cutoff);
+        history.Record(Item(), new UserItemActivity { UserId = _userId, Played = true, PlayCount = 200,
+            LastPlayedDate = _cutoff.AddMonths(-2).UtcDateTime }, _cutoff, _cutoff);
+        var report = Build(history);
+        Assert.Equal(2, Assert.Single(report.Items).PlayCount);
+        Assert.Equal(1800, report.PlaybackReportingSeconds);
+        Assert.Equal(1800, report.Items[0].ActiveSeconds);
+        Assert.Equal(0, report.Items[0].EstimatedSeconds);
+        Assert.Equal(0, report.ReconstructedItemCount);
+    }
+
+    [Fact]
+    public void ImportedDurationsAndRealFallbackEstimatesRemainSeparateAcrossPublicationAndComparison()
+    {
+        var history = new UserActivityHistory { PlaybackReportingBeforeUtc = _cutoff };
+        var entry = new PlaybackReportingReader.Entry("recorded", _userId, _itemId, "Movie", "Movie", _cutoff.AddMonths(-3), 600);
+        history.Import(entry, Item(), _cutoff);
+        history.Record(Item() with { ItemId = Guid.NewGuid() }, new UserItemActivity { UserId = _userId, Played = true, PlayCount = 1,
+            LastPlayedDate = _cutoff.AddMonths(-2).UtcDateTime }, _cutoff, _cutoff);
+        var report = Build(history);
+        Assert.Equal(4200, report.Items.Sum(item => item.ActiveSeconds));
+        Assert.Equal(3600, report.Items.Sum(item => item.EstimatedSeconds));
+        Assert.Equal(600, report.PlaybackReportingSeconds);
+        Assert.Equal(1, report.ReconstructedItemCount);
+        Assert.Equal(600, report.Months.Sum(month => month.PlaybackReportingSeconds));
+        Assert.Equal(3600, report.Months.Sum(month => month.EstimatedSeconds));
+        var store = new YearlyRewindStore(_directory);
+        Assert.True(store.Publish(report));
+        var next = YearlyRewindAggregator.Build(_userId, new UserActivityHistory(), _cutoff, _cutoff.AddYears(1), _cutoff.AddYears(1), TimeZoneInfo.Utc, store.Load(_userId));
+        Assert.Equal(600, next.Comparison!.PlaybackReportingSeconds);
+        Assert.Equal(3600, next.Comparison.EstimatedSeconds);
+        Assert.Equal(1, next.Comparison.ReconstructedItemCount);
+        Assert.True(store.Publish(next));
     }
 
     [Fact]
@@ -287,7 +317,13 @@ public sealed class PlaybackReportingImportTests : IDisposable
         Assert.Equal(1260, Assert.Single(report.Items).ActiveSeconds);
         Assert.Equal(3, report.Items[0].PlayCount);
         Assert.Equal(2, report.PlaybackReportingPlayCount);
+        Assert.Equal(0, report.Items[0].EstimatedSeconds);
+        Assert.Equal(1200, report.Items[0].PlaybackReportingSeconds);
+        Assert.Equal(0, report.ReconstructedItemCount);
         Assert.Equal(60, report.Insights!.HourlySeconds.Sum());
+        var reports = new YearlyRewindStore(_directory);
+        Assert.True(reports.Publish(report));
+        Assert.Equal(1200, reports.Load(_userId)!.PlaybackReportingSeconds);
         var ownPeriodEntry = new PlaybackReportingReader.Entry("own", _userId, _itemId, "Movie", "Movie", _cutoff.AddMinutes(-5), 900);
         Assert.False(history.Import(ownPeriodEntry, Item(), _cutoff));
         Assert.Equal(2, history.ImportedPlayback.Count);

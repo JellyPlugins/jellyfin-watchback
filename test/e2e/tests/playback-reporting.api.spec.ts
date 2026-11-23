@@ -54,7 +54,10 @@ test('imports retained Playback Reporting history once and keeps the published r
     expect(field(report,'UserId').replaceAll('-','')).toBe(userId.replaceAll('-',''));
     const imported=field(report,'Items').find((row:any)=>field(row,'PlaybackReportingPlayCount')===1);
     expect(field(imported,'ActiveSeconds')).toBe(600);
-    expect(field(imported,'EstimatedSeconds')).toBe(600);
+    expect(field(imported,'EstimatedSeconds')).toBe(0);
+    expect(field(imported,'PlaybackReportingSeconds')).toBe(600);
+    expect(field(imported,'HasReconstructedActivity')).toBe(false);
+    expect(field(report,'ReconstructedItemCount')).toBe(0);
     expect(digest()).toBe(before);
     const snapshot=field(report,'SnapshotId');
     const historyFile=join(rewindDataDir(),'activity-history',userId.replaceAll('-','')+'.json');

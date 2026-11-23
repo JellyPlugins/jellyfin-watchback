@@ -22,6 +22,9 @@ internal sealed record YearlyRewindItem
 
     public double EstimatedSeconds { get; init; }
 
+    // Recorded duration imported from Playback Reporting; separate from inferred runtime.
+    public double PlaybackReportingSeconds { get; init; }
+
     public bool HasReconstructedActivity { get; init; }
 
     public bool? HasJellyfinReconstructedActivity { get; init; }
