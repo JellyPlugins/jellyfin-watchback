@@ -63,6 +63,13 @@
     function reconstructedCount() {
         return value(report, 'ReconstructedItemCount') || (value(report, 'Items') || []).filter(function (item) { return value(item, 'HasReconstructedActivity'); }).length;
     }
+    function recordedImportSeconds(source) {
+        return value(source, 'PlaybackReportingSeconds') ?? (value(source, 'Items') || []).reduce(function (sum, item) { return sum + (value(item, 'PlaybackReportingSeconds') || 0); }, 0);
+    }
+    function hasUnmeasuredActivity(source) {
+        return !!(value(source, 'ReconstructedItemCount') || value(source, 'PlaybackReportingPlayCount') || recordedImportSeconds(source)
+            || (value(source, 'Items') || []).some(function (item) { return value(item, 'HasReconstructedActivity') || value(item, 'PlaybackReportingPlayCount'); }));
+    }
     function hasMeasuredPlayback() {
         return (value(value(report, 'Insights'), 'HourlySeconds') || []).some(function (amount) { return amount > 0; });
     }
@@ -203,12 +210,12 @@
     function mediaStreakDays(source) {
         if (!source) return value(report, 'FullTimePerGenre') ? 0 : null;
         var insights = value(source, 'Insights');
-        var onlyEstimates = value(source, 'ReconstructedItemCount') && !(value(insights, 'HourlySeconds') || []).some(function (amount) { return amount > 0; });
+        var onlyEstimates = hasUnmeasuredActivity(source) && !(value(insights, 'HourlySeconds') || []).some(function (amount) { return amount > 0; });
         if (insights && !onlyEstimates) return value(insights, 'LongestStreakDays');
         return null;
     }
     function renderStreakSummary(root, combined, video, days, estimatedOnly) {
-        if (estimatedOnly) root.append(node('p', text('noMeasuredInsights'), 'jfw-rewind-secondary'));
+        if (estimatedOnly) root.append(node('p', text(recordedImportSeconds(report) + recordedImportSeconds(value(report, 'Music')) > 0 ? 'importedInsights' : 'noMeasuredInsights'), 'jfw-rewind-secondary'));
         else if (days === null || days === undefined) root.append(node('p', text('insightsMissing'), 'jfw-rewind-secondary'));
         else {
             root.append(node('p', number(days) + ' ' + text(new Intl.PluralRules(locale).select(days) === 'one' ? 'daySingular' : 'dayPlural'), 'jfw-rewind-streak-length'));
@@ -224,7 +231,7 @@
         var hasMusic = (value(music, 'Items') || []).length > 0;
         var combined = value(report, 'ActivityStreak');
         var measured = hasMeasuredPlayback() || (value(musicInsights, 'HourlySeconds') || []).some(function (amount) { return amount > 0; });
-        var estimatedOnly = (reconstructedCount() || value(music, 'ReconstructedItemCount')) && !measured;
+        var estimatedOnly = (hasUnmeasuredActivity(report) || hasUnmeasuredActivity(music)) && !measured;
         var days = null;
         if (combined) days = value(combined, 'Days');
         else if (!hasMusic && video) days = value(video, 'LongestStreakDays');
@@ -246,11 +253,12 @@
         var streak = section(grid, text('streak'), 'jfw-rewind-streak');
         var insights = value(report, 'Insights');
         renderStreak(streak);
-        if (!insights) { patterns.append(node('p', text('insightsMissing'), 'jfw-rewind-secondary')); panel.append(grid); return; }
-        if (reconstructedCount() && !hasMeasuredPlayback()) {
-            patterns.append(node('p', text('noMeasuredInsights'), 'jfw-rewind-secondary'));
+        if (!insights) { patterns.append(node('p', text(recordedImportSeconds(report) > 0 ? 'importedInsights' : 'insightsMissing'), 'jfw-rewind-secondary')); panel.append(grid); return; }
+        if (hasUnmeasuredActivity(report) && !hasMeasuredPlayback()) {
+            patterns.append(node('p', text(recordedImportSeconds(report) > 0 ? 'importedInsights' : 'noMeasuredInsights'), 'jfw-rewind-secondary'));
             panel.append(grid); return;
         }
+        if (recordedImportSeconds(report) > 0) patterns.append(node('p', text('importedInsights'), 'jfw-rewind-secondary'));
         var hours = value(insights, 'HourlySeconds') || [];
         var weekdays = value(insights, 'WeekdaySeconds') || [];
         if (!hours.some(function (amount) { return amount > 0; })) patterns.append(node('p', text('empty')));
@@ -270,7 +278,9 @@
     }
     function previousActiveDays(previous) {
         if (!previous) return null;
-        if (value(previous, 'ReconstructedItemCount') && (value(previous, 'ActiveSeconds') || 0) <= (value(previous, 'EstimatedSeconds') || 0)) return null;
+        var activeSeconds = value(previous, 'ActiveSeconds') || 0;
+        var tolerance = Math.max(0.001, activeSeconds * 1e-10);
+        if (hasUnmeasuredActivity(previous) && activeSeconds <= (value(previous, 'EstimatedSeconds') || 0) + recordedImportSeconds(previous) + tolerance) return null;
         return value(previous, 'ActiveDays') || 0;
     }
     function videoComparisonMetrics(items, series, previous) {
@@ -281,7 +291,7 @@
             ['movies', items.filter(function (item) { return value(item, 'ItemType') === 'Movie'; }).length, previous ? value(previous, 'MovieCount') || 0 : null, 0],
             ['episodes', items.filter(function (item) { return value(item, 'ItemType') === 'Episode'; }).length, previous ? value(previous, 'EpisodeCount') || 0 : null, 0],
             ['series', series.size, previous ? value(previous, 'SeriesCount') || 0 : null, 0],
-            ['activeDays', reconstructedCount() && !hasMeasuredPlayback() ? null : value(report, 'ActiveDays') || 0, previousActiveDays(previous), 0]
+            ['activeDays', hasUnmeasuredActivity(report) && !hasMeasuredPlayback() ? null : value(report, 'ActiveDays') || 0, previousActiveDays(previous), 0]
         ];
         if (value(report, 'DataState') === 'NotCollected') metrics.forEach(function (metric) { metric[1] = null; });
         return metrics;
@@ -315,7 +325,7 @@
         var metrics = videoComparisonMetrics(items, series, previous);
         appendMusicComparison(metrics, tracks, previousMusic, musicEstimated);
         metrics.forEach(function (metric) {
-            var row = node('tr'); var label = node('th', text(metric[0] === 'activeDays' && (reconstructedCount() || value(previous, 'ReconstructedItemCount')) ? 'measuredActiveDays' : metric[0])); label.scope = 'row';
+            var row = node('tr'); var label = node('th', text(metric[0] === 'activeDays' && (hasUnmeasuredActivity(report) || hasUnmeasuredActivity(previous)) ? 'measuredActiveDays' : metric[0])); label.scope = 'row';
             if (metric[1] === null || metric[2] === null) {
                 row.append(label, node('td', metric[1] === null ? '—' : number(metric[1], metric[3])), node('td', metric[2] === null ? '—' : number(metric[2], metric[3])), node('td', '—'));
                 rows.append(row);
@@ -348,7 +358,7 @@
         addStat(stats, number(movies.length), text('movies'), 'movie');
         addStat(stats, number(series.size), text('series'), 'tv');
         addStat(stats, number(episodes.length), text('episodes'), 'episodes');
-        addStat(stats, reconstructedCount() && !hasMeasuredPlayback() ? '—' : number(value(report, 'ActiveDays') || 0), text(reconstructedCount() ? 'measuredActiveDays' : 'activeDays'), 'activeDays');
+        addStat(stats, hasUnmeasuredActivity(report) && !hasMeasuredPlayback() ? '—' : number(value(report, 'ActiveDays') || 0), text(hasUnmeasuredActivity(report) ? 'measuredActiveDays' : 'activeDays'), 'activeDays');
         var music = value(report, 'Music');
         var tracks = value(music, 'Items') || [];
         if (tracks.length) {
@@ -646,7 +656,8 @@
         reconstructed: "Includes {count} titles reconstructed from Jellyfin data. Watch time may be estimated or unavailable. Viewing habits and active days use measured playback only.",
         measuredActiveDays: "Measured active days",
         noMeasuredInsights: "These details require measured playback. Only reconstructed activity is available for this period.",
-        measured: "Measured",
+        measured: "Recorded",
+        importedInsights: "Playback Reporting durations are recorded values. Viewing habits, active days and streaks use only activity intervals recorded by Watchback.",
         estimated: "Estimated",
         estimatedPart: "{hours} h estimated",
         comparisonEstimated: "At least one report includes reconstructed activity. Differences may include estimated values.",
