@@ -13,8 +13,8 @@
         "changelog": "v1.0.1.0 - Annual rewind corrections\n\n- The rewind follows the signed-in user's language, serves frozen reports straight from storage, shows scalable genre info icons, hides an empty music streak and counts imported Playback Reporting durations as recorded data.\n- Verified by 93% backend unit test coverage, 97% UI test coverage, and 11 end-to-end Docker tests\n- Requires Jellyfin 12.4",
         "targetAbi": "12.4.0.0",
         "sourceUrl": "https://github.com/JellyPlugins/jellyfin-watchback/releases/download/1.0.1.0/Watchback_1.0.1.0.zip",
-        "checksum": "TBD",
-        "timestamp": "2026-11-27T13:12:22Z"
+        "checksum": "89ff72de9cc717e4457044156b133417",
+        "timestamp": "2026-11-27T13:31:26Z"
       },
       {
         "version": "1.0.0.0",
