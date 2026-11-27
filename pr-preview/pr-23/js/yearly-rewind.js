@@ -240,9 +240,9 @@
         if (combined) days = value(combined, 'Days');
         else if (!hasMusic && video) days = value(video, 'LongestStreakDays');
         renderStreakSummary(root, combined, video, days, estimatedOnly);
+        // Reports that store no per-media streak facts and counted no music have nothing to split, so the heading number stands alone.
         if (combined || hasMusic || value(report, 'FullTimePerGenre')) {
             var breakdown = node('div', null, 'jfw-rewind-streak-breakdown');
-            // Music facts exist only in reports that actually counted audio playback.
             var media = [[report, 'videoMedia', 'video']];
             if (hasMusic) media.push([music, 'musicMedia', 'music']);
             media.forEach(function (entry) {
