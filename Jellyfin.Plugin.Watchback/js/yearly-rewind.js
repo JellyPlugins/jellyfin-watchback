@@ -213,7 +213,6 @@
         return new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' }).format(new Date(instant + 'T00:00:00Z'));
     }
     function mediaStreakDays(source) {
-        if (!source) return value(report, 'FullTimePerGenre') ? 0 : null;
         var insights = value(source, 'Insights');
         var onlyEstimates = hasUnmeasuredActivity(source) && !(value(insights, 'HourlySeconds') || []).some(function (amount) { return amount > 0; });
         if (insights && !onlyEstimates) return value(insights, 'LongestStreakDays');
@@ -243,7 +242,10 @@
         renderStreakSummary(root, combined, video, days, estimatedOnly);
         if (combined || hasMusic || value(report, 'FullTimePerGenre')) {
             var breakdown = node('div', null, 'jfw-rewind-streak-breakdown');
-            [[report, 'videoMedia', 'video'], [music, 'musicMedia', 'music']].forEach(function (entry) {
+            // Music facts exist only in reports that actually counted audio playback.
+            var media = [[report, 'videoMedia', 'video']];
+            if (hasMusic) media.push([music, 'musicMedia', 'music']);
+            media.forEach(function (entry) {
                 var amount = mediaStreakDays(entry[0]);
                 var stat = node('div', null, 'jfw-rewind-streak-' + entry[2]);
                 stat.append(node('strong', amount === null || amount === undefined ? '—' : number(amount)), node('span', text(entry[1]))); breakdown.append(stat);
@@ -719,7 +721,7 @@
 .jfw-rewind-info-toggle{display:inline-flex;align-items:center;border:0;background:transparent;color:#00a4dc;padding:0 .15em;cursor:pointer;line-height:1}.jfw-rewind-info-icon{width:.95em;height:.95em;display:block;flex-shrink:0}.jfw-rewind-info-toggle:focus-visible{outline:2px solid #00a4dc;outline-offset:3px;border-radius:3px}
 .jfw-rewind-genre-info{color:#00a4dc;font-size:.85em;line-height:1.5;margin:0 0 1em;overflow-wrap:anywhere}.jfw-rewind-genre-info[hidden]{display:none}
 .jfw-rewind-genre-controls{display:flex;align-items:center;justify-content:space-between;gap:.7em}.jfw-rewind-genre-controls p{margin:0;flex:1;min-width:0}.jfw-rewind-genre-controls select{margin-inline-start:auto;min-width:0;max-width:58%}
-.jfw-rewind-streak-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1em;border-top:1px solid var(--rewind-border);padding-top:1em;margin-top:1em}.jfw-rewind-streak-breakdown > div{display:flex;flex-direction:column;gap:.3em;min-width:0}.jfw-rewind-streak-breakdown strong{font-size:1.5em;color:var(--rewind-primary)}.jfw-rewind-streak-breakdown span{font-size:.8em;opacity:.7;overflow-wrap:anywhere}
+.jfw-rewind-streak-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1em;border-top:1px solid var(--rewind-border);padding-top:1em;margin-top:1em}.jfw-rewind-streak-breakdown:not(:has(> :nth-child(2))){grid-template-columns:1fr}.jfw-rewind-streak-breakdown > div{display:flex;flex-direction:column;gap:.3em;min-width:0}.jfw-rewind-streak-breakdown strong{font-size:1.5em;color:var(--rewind-primary)}.jfw-rewind-streak-breakdown span{font-size:.8em;opacity:.7;overflow-wrap:anywhere}
 .jfw-rewind-select{font:inherit;color:inherit;background:rgba(127,127,127,.1);border:1px solid var(--rewind-border);border-radius:4px;padding:.4em;max-width:100%;color-scheme:light dark}.jfw-rewind-select option{background:Canvas;color:CanvasText}
 .jfw-rewind-insight-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:1.2em;margin-top:1.2em}.jfw-rewind-pattern-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.2em}.jfw-rewind-pattern-grid h4{font-size:.9em;margin:.3em 0}.jfw-rewind-favorite{font-size:1.05em;font-weight:600;color:var(--rewind-primary);overflow-wrap:anywhere}
 .jfw-rewind-distribution{list-style:none;padding:0;margin:0}.jfw-rewind-distribution li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.4em;margin:.8em 0;font-size:.8em}.jfw-rewind-distribution li span{overflow-wrap:anywhere}.jfw-rewind-distribution strong{font-weight:400;white-space:nowrap;opacity:.7}.jfw-rewind-distribution-track{grid-column:1/-1;background:rgba(127,127,127,.1);border-radius:3px;overflow:hidden;height:5px}.jfw-rewind-distribution-track div{height:100%;background:var(--rewind-primary)}

@@ -535,10 +535,11 @@ const musicReport = (overrides: Record<string, any> = {}) => ({
 test.each([undefined, {Items: []}])('music content is absent from old or empty reports (%j)', async music => {
  extra = music === undefined ? {} : {Music: music};
  loadYearlyRewindBundle(); await flush();
- for (const selector of ['.jfw-rewind-top-tracks', '.jfw-rewind-music-genres', '.jfw-rewind-music-months', '.jfw-rewind-stats-music']) {
+ for (const selector of ['.jfw-rewind-top-tracks', '.jfw-rewind-music-genres', '.jfw-rewind-music-months', '.jfw-rewind-stats-music', '.jfw-rewind-streak-music']) {
   expect(root.querySelector(selector)).toBeNull();
  }
  expect(root.querySelectorAll('.jfw-rewind-stat')).toHaveLength(5);
+ expect(root.querySelector('.jfw-rewind-streak-video strong')?.textContent).toBe('—');
 });
 
 test('music ranks five tracks by listening time and renders safe independent totals and charts', async () => {
