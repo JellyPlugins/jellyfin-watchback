@@ -150,8 +150,13 @@
     function renderGenreChart(root, source, weights, title, className, id) {
         var chart = section(root, title, className);
         var heading = chart.querySelector('h3'); heading.classList.add('jfw-rewind-genre-heading');
-        var toggle = node('button', 'ⓘ', 'jfw-rewind-info-toggle'); toggle.type = 'button';
+        var toggle = node('button', null, 'jfw-rewind-info-toggle'); toggle.type = 'button';
         toggle.setAttribute('aria-label', text('genreInfoToggle')); toggle.setAttribute('aria-expanded', 'false'); toggle.setAttribute('aria-controls', id + '-info');
+        var toggleIcon = svgNode('svg'); toggleIcon.setAttribute('viewBox', '0 0 24 24'); toggleIcon.setAttribute('fill', 'currentColor');
+        toggleIcon.setAttribute('aria-hidden', 'true'); toggleIcon.setAttribute('focusable', 'false');
+        toggleIcon.classList.add('jfw-rewind-info-icon');
+        var togglePath = svgNode('path'); togglePath.setAttribute('d', statIcons.info); toggleIcon.append(togglePath);
+        toggle.append(toggleIcon);
         heading.append(toggle);
         var info = node('p', text('genreInfo'), 'jfw-rewind-genre-info'); info.id = id + '-info'; info.hidden = true; chart.append(info);
         toggle.addEventListener('click', function () { info.hidden = !info.hidden; toggle.setAttribute('aria-expanded', String(!info.hidden)); });
@@ -665,8 +670,10 @@
         unknownGenre: 'Unknown genre'
     };
     // Clock, film and TV paths match Shared.js's existing plugin icons.
+    // All paths are 24x24 so every icon can share one viewBox and glyph size.
     var pieColors = ['#00a4dc', '#e67e22', '#2ecc71', '#e74c3c', '#9b59b6', '#f1c40f'];
     var statIcons = {
+        "info": "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z",
         "music": "M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z",
         "play": "M8 5v14l11-7z",
         "schedule": "M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z",
@@ -709,7 +716,7 @@
 .jfw-rewind-pie{width:180px;max-width:100%;height:auto;flex-shrink:0}.jfw-rewind-pie-legend{list-style:none;padding:0;margin:0;flex:1 1 180px;min-width:0}
 .jfw-rewind-pie-legend li{display:flex;align-items:center;gap:.5em;margin:.6em 0;flex-wrap:wrap}.jfw-rewind-swatch{width:.7em;height:.7em;border-radius:2px;flex-shrink:0}.jfw-rewind-legend-label{flex:1;min-width:0;overflow-wrap:anywhere}.jfw-rewind-pie-legend strong{font-size:.85em;font-weight:400;white-space:nowrap}
 .jfw-rewind-genre-heading{display:flex;align-items:center;gap:.5em}
-.jfw-rewind-info-toggle{border:0;background:transparent;color:#00a4dc;font:inherit;font-size:1.15em;padding:0 .2em;cursor:pointer;line-height:1}.jfw-rewind-info-toggle:focus-visible{outline:2px solid #00a4dc;outline-offset:3px;border-radius:3px}
+.jfw-rewind-info-toggle{display:inline-flex;align-items:center;border:0;background:transparent;color:#00a4dc;padding:0 .15em;cursor:pointer;line-height:1}.jfw-rewind-info-icon{width:.95em;height:.95em;display:block;flex-shrink:0}.jfw-rewind-info-toggle:focus-visible{outline:2px solid #00a4dc;outline-offset:3px;border-radius:3px}
 .jfw-rewind-genre-info{color:#00a4dc;font-size:.85em;line-height:1.5;margin:0 0 1em;overflow-wrap:anywhere}.jfw-rewind-genre-info[hidden]{display:none}
 .jfw-rewind-genre-controls{display:flex;align-items:center;justify-content:space-between;gap:.7em}.jfw-rewind-genre-controls p{margin:0;flex:1;min-width:0}.jfw-rewind-genre-controls select{margin-inline-start:auto;min-width:0;max-width:58%}
 .jfw-rewind-streak-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1em;border-top:1px solid var(--rewind-border);padding-top:1em;margin-top:1em}.jfw-rewind-streak-breakdown > div{display:flex;flex-direction:column;gap:.3em;min-width:0}.jfw-rewind-streak-breakdown strong{font-size:1.5em;color:var(--rewind-primary)}.jfw-rewind-streak-breakdown span{font-size:.8em;opacity:.7;overflow-wrap:anywhere}

@@ -292,7 +292,7 @@ test('renders two accessible pie charts using time shares and unknown genre meta
  expect(root.querySelector('.jfw-rewind-mix svg')?.getAttribute('aria-label')).toContain('Series: 14.3%');
  expect(root.querySelector('.jfw-rewind-genres')?.textContent).toContain('Distinct genres: 1');
  expect(root.querySelector('.jfw-rewind-genres')?.textContent).toContain('Unknown genre');
- expect(root.querySelector('.jfw-rewind-genres svg')?.getAttribute('aria-label')).toContain('Drama: 85.7%');
+ expect(root.querySelector('.jfw-rewind-genres svg.jfw-rewind-pie')?.getAttribute('aria-label')).toContain('Drama: 85.7%');
 });
 
 test('monthly genre selection uses frozen monthly data without fetching or changing the report', async () => {
@@ -304,7 +304,7 @@ test('monthly genre selection uses frozen monthly data without fetching or chang
  const select = root.querySelector('.jfw-rewind-select') as HTMLSelectElement;
  expect(select.options).toHaveLength(3);
  select.value = '1'; select.dispatchEvent(new Event('change'));
- expect(root.querySelector('.jfw-rewind-genres svg')).toBeNull();
+ expect(root.querySelector('.jfw-rewind-genres svg.jfw-rewind-pie')).toBeNull();
  expect(root.querySelector('.jfw-rewind-genres')?.textContent).toContain('No qualifying playback');
  select.value = 'all'; select.dispatchEvent(new Event('change'));
  expect(root.querySelectorAll('.jfw-rewind-pie')).toHaveLength(2);
@@ -360,8 +360,8 @@ test('genre pie counts full time for every distinct tag and groups the long tail
  const genres = root.querySelector('.jfw-rewind-genres')!;
  expect(genres.textContent).toContain('Distinct genres: 10');
  expect(genres.querySelectorAll('.jfw-rewind-pie-legend li')).toHaveLength(6);
- expect(genres.querySelector('svg')?.getAttribute('aria-label')).toContain('Shared: 50% · 9 h');
- expect(genres.querySelector('svg')?.getAttribute('aria-label')).toContain('Other genres: 27.8% · 5 h');
+ expect(genres.querySelector('svg.jfw-rewind-pie')?.getAttribute('aria-label')).toContain('Shared: 50% · 9 h');
+ expect(genres.querySelector('svg.jfw-rewind-pie')?.getAttribute('aria-label')).toContain('Other genres: 27.8% · 5 h');
  expect(root.querySelector('.jfw-rewind-mix svg')?.getAttribute('aria-label')).toContain('Films: 100% · 9 h');
 });
 
@@ -655,6 +655,9 @@ test('genre information toggles independently above inline diversity controls', 
   const button = chart.querySelector<HTMLButtonElement>('h3 button')!;
   const info = chart.querySelector<HTMLElement>('.jfw-rewind-genre-info')!;
   const controls = chart.querySelector('.jfw-rewind-genre-controls')!;
+  expect(button.querySelector('svg.jfw-rewind-info-icon path')?.getAttribute('d')).toBeTruthy();
+  expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+  expect(button.textContent).toBe('');
   expect(button.getAttribute('aria-controls')).toBe(info.id);
   expect(button.getAttribute('aria-expanded')).toBe('false');
   expect(info.hidden).toBe(true);
@@ -676,8 +679,8 @@ test('legacy annual genres use full item time without offering divided monthly w
  loadYearlyRewindBundle(); await flush();
  const chart = root.querySelector('.jfw-rewind-genres')!;
  expect(chart.querySelector('select')).toBeNull();
- expect(chart.querySelector('svg')?.getAttribute('aria-label')).toContain('Drama: 50% · 2 h');
- expect(chart.querySelector('svg')?.getAttribute('aria-label')).toContain('Adventure: 50% · 2 h');
+ expect(chart.querySelector('svg.jfw-rewind-pie')?.getAttribute('aria-label')).toContain('Drama: 50% · 2 h');
+ expect(chart.querySelector('svg.jfw-rewind-pie')?.getAttribute('aria-label')).toContain('Adventure: 50% · 2 h');
 });
 
 test('media mix includes music and summary places series before episodes', async () => {
